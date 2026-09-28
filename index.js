@@ -697,6 +697,10 @@ fastify.addHook("onRequest", async (req, reply) => {
     req.method !== "OPTIONS" &&
     (path === "/movie-proxy" ||
       path.startsWith("/movie-proxy/") ||
+      // the hls-resolve route fetches upstream per request (content API +
+      // playlist); keep it under the same cap or it becomes an unmetered
+      // relay bypass
+      path === "/hls-resolve" ||
       // subtitle compatibility route calls the same proxy handler; keep it
       // under the same cap or it becomes an unmetered relay bypass
       path === "/api.php");

@@ -110,7 +110,16 @@ These were observed on 2026-09-03 and must be rechecked because providers change
   and `cineby.ws` 404s all watch paths; `vidking.net` DNS-dead;
   `player.videasy.to` flaps 403 to non-browser clients (curl 200, headless
   Chromium always 403, relay flaky) — front door too unreliable to add.
-  Nothing to add.
+- **2026-09-29 — hls.lol resolved-HLS source added (pending verification).**
+  `GET cdn.hls.lol/content/movie|tv/{id}[/{s}/{e}]` returns a signed
+  `totallyacdn.org` playlist for movies and TV (VPS 200). totallyacdn
+  bounces wrongly-referred/throttled media to YouTube (302): segments need
+  an embed referer (`https://cinecat.eu/`, stamped by the rewriteM3u8
+  rule), and the host throttles bursts — `/hls-resolve` retries the
+  playlist once and never serves the bounce page as m3u8. Playback runs in
+  the local `hls-player.html` (vendored hls.js, hls.js-first with one
+  native fallback) so every byte stays on `/movie-proxy`. Appended as
+  source index 4; default unchanged.
 - A prior attempted movie fix was fully reverted. Commits `3cf60bbe` through
   `8cfd2243` document that rollback; do not reintroduce that design.
 - **2026-09-28 — 2Embed boot errors fixed; upstream media blocks remain.**

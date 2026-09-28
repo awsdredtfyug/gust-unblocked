@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import zlib from "node:zlib";
 import Fastify from "fastify";
-import { registerMovieRelay, rewriteHtml } from "../movie-relay.js";
+import {
+  registerMovieRelay,
+  rewriteHtml,
+  rewriteM3u8,
+} from "../movie-relay.js";
 
 test("movie relay handles real HTTP bodies, ranges and redirect validation", async (t) => {
   const checked = [];
@@ -67,6 +71,33 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
           "https://p19-ad-site-sign-sg.tiktokcdn.com/ad-site-i18n-sg/abc.image",
       });
       res.end();
+    } else if (req.url === "/content/movie/7") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          found: true,
+          url: `http://relay-fixture.test:${port}/pl.m3u8`,
+        }),
+      );
+    } else if (req.url === "/content/movie/404") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ found: false }));
+    } else if (req.url === "/pl.m3u8") {
+      res.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" });
+      res.end("#EXTM3U\n#EXTINF:8.0,\nseg1.ts\n");
+    } else if (req.url === "/pl-html") {
+      // the playlist host bounces throttled clients to an HTML page; the
+      // route must reject that instead of serving it as a playlist
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<!doctype html><html><body>bounce</body></html>");
+    } else if (req.url === "/content/movie/9") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          found: true,
+          url: `http://relay-fixture.test:${port}/pl-html`,
+        }),
+      );
     } else if (req.url === "/post-303" || req.url === "/post-307") {
       res.writeHead(req.url.endsWith("303") ? 303 : 307, {
         location: "./echo",
@@ -96,6 +127,7 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
         throw new Error("Fixture redirect rejected.");
       return { url, addresses: [{ address: "127.0.0.1", family: 4 }] };
     },
+    hlsApiBase: `http://relay-fixture.test:${port}`,
   });
   await app.ready();
   t.after(async () => {
@@ -234,6 +266,28 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
       assert.match(viaRedirect.body, /decoy/i);
     },
   );
+  await t.test("totallyacdn playlists keep the embed referer", async () => {
+    const target = new URL("https://totallyacdn.org/cdn-m3u8?payload=abc");
+    const out = rewriteM3u8(
+      "#EXTM3U\n#EXTINF:8.0,\nhttps://totallyacdn.org/?payload=seg1\n",
+      target,
+    );
+    // totallyacdn bounces self-referred media to an unrelated page, so the
+    // relay must stamp the embed referer instead of the playlist URL.
+    assert.ok(
+      out.includes(`referer=${encodeURIComponent("https://cinecat.eu/")}`),
+    );
+    assert.ok(!out.includes("referer=https%3A%2F%2Ftotallyacdn.org"));
+    // ordinary hosts keep the playlist URL as referer
+    const plain = rewriteM3u8("#EXTM3U\nseg.ts\n", {
+      href: "https://example.net/a/index.m3u8",
+    });
+    assert.ok(
+      plain.includes(
+        `referer=${encodeURIComponent("https://example.net/a/index.m3u8")}`,
+      ),
+    );
+  });
   await t.test(
     "303 switches POST to GET while 307 preserves POST data",
     async () => {
@@ -250,6 +304,50 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
       }
     },
   );
+  await t.test("/hls-resolve serves a rewritten playlist", async () => {
+    const ok = await app.inject("/hls-resolve?type=movie&id=7");
+    assert.equal(ok.statusCode, 200);
+    assert.ok(
+      String(ok.headers["content-type"]).includes("mpegurl"),
+      "players key off the playlist content type",
+    );
+    assert.ok(
+      String(ok.headers["cache-control"]).includes("no-store"),
+      "signed playlists must never be cached",
+    );
+    // the segment resolves against the playlist URL and carries it back
+    // as referer so the media host accepts the request
+    assert.ok(
+      ok.body.includes(
+        `/movie-proxy?url=${encodeURIComponent(`http://relay-fixture.test:${port}/seg1.ts`)}`,
+      ),
+    );
+    assert.ok(
+      ok.body.includes(
+        `referer=${encodeURIComponent(`http://relay-fixture.test:${port}/pl.m3u8`)}`,
+      ),
+    );
+
+    assert.equal(
+      (await app.inject("/hls-resolve?type=movie&id=7x")).statusCode,
+      400,
+    );
+    assert.equal(
+      (await app.inject("/hls-resolve?type=tv&id=7")).statusCode,
+      400,
+      "tv requires season and episode",
+    );
+    assert.equal(
+      (await app.inject("/hls-resolve?type=movie&id=404")).statusCode,
+      404,
+      "found:false surfaces as not found",
+    );
+    assert.equal(
+      (await app.inject("/hls-resolve?type=movie&id=9")).statusCode,
+      502,
+      "an HTML bounce page is never served as a playlist",
+    );
+  });
   await t.test(
     "bad upstream compression returns an explicit error",
     async () => {

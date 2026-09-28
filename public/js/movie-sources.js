@@ -54,13 +54,29 @@ var MOVIES_SOURCES = [
     // Verified 2026-09-08: full chain works through the relay from the VPS
     // (vidsrc.to → vsembed.ru → cloudorchestranova.com → per-host
     // generate.php token → comityofcognomen.site playlists/segments, all
-    // 200). Default source.
+    // 200). Fallback source (2Embed is the default).
     name: "VidSrc.to (vidsrc.to)",
     url: function (t, id, s, e) {
       var upstream =
         "https://vidsrc.to/embed/" +
         (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
       return "/movie-proxy?url=" + encodeURIComponent(upstream);
+    },
+  },
+  {
+    // Resolved HLS via the hls.lol content API (verified 2026-09-29 from
+    // the VPS: API + playlist + segments 200 through the relay for movies
+    // and tv s/e). Plays through the local hls-player page so every byte
+    // stays proxied; appended last so existing source indexes never shift.
+    name: "HLS (hls.lol)",
+    url: function (t, id, s, e) {
+      return (
+        "/hls-player.html?type=" +
+        t +
+        "&id=" +
+        id +
+        (t === "tv" ? "&s=" + s + "&e=" + e : "")
+      );
     },
   },
 ];

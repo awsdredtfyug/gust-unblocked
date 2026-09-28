@@ -385,9 +385,28 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
   return cleaned;
 }
 
-function rewriteM3u8(playlistText, targetUrl) {
+// totallyacdn.org bounces media requests whose referer is itself (or
+// missing) to an unrelated YouTube page (302); the same request with an
+// embed-site referer returns video (verified 2026-09-29 from the VPS
+// egress: self-referer 302s, cinecat.eu referer 200s, light volume).
+const TOTALLYACDN_REFERER = "https://cinecat.eu/";
+
+function playlistReferer(targetUrl, override) {
+  if (override) return override;
+  try {
+    const host = new URL(unwrapProxyUrl(targetUrl.href)).hostname.toLowerCase();
+    if (host === "totallyacdn.org" || host.endsWith(".totallyacdn.org"))
+      return TOTALLYACDN_REFERER;
+  } catch {
+    /* fall through to the playlist URL */
+  }
+  return targetUrl.href;
+}
+
+function rewriteM3u8(playlistText, targetUrl, refererOverride) {
   const baseUrl = new URL(unwrapProxyUrl(targetUrl.href));
   const href = baseUrl.href;
+  const referer = playlistReferer(targetUrl, refererOverride);
   const lines = playlistText.split("\n");
 
   const rewritten = lines.map((line) => {
@@ -402,7 +421,7 @@ function rewriteM3u8(playlistText, targetUrl) {
           const unescapedVal = unwrapProxyUrl(val);
           const abs = new URL(unescapedVal, href).href;
           if (!/^https?:/i.test(abs)) return match;
-          const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
+          const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(referer)}`;
           return `URI=${quote}${proxied}${quote}`;
         } catch {
           return match;
@@ -414,7 +433,7 @@ function rewriteM3u8(playlistText, targetUrl) {
       try {
         const unescapedLine = unwrapProxyUrl(trimmed);
         const abs = new URL(unescapedLine, href).href;
-        return `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
+        return `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(referer)}`;
       } catch {
         return line;
       }
@@ -572,7 +591,7 @@ function rewriteJson(jsonText, targetUrl) {
 
 export function registerMovieRelay(
   server,
-  { resolveTarget = resolvePublicUrl } = {},
+  { resolveTarget = resolvePublicUrl, hlsApiBase = "https://cdn.hls.lol" } = {},
 ) {
   // A trusted server-side dependency override supports isolated fixture tests.
   // No request parameter can bypass the default public-network validator.
@@ -580,6 +599,91 @@ export function registerMovieRelay(
     const resolved = await resolveTarget(unwrapProxyUrl(rawUrl));
     resolved.url.validatedAddresses = resolved.addresses;
     return resolved.url;
+  }
+
+  // Minimal validated GET for the /hls-resolve route below: SSRF-checked
+  // like everything else, follows up to 5 redirects, caps the body so a
+  // malicious playlist cannot exhaust memory.
+  function fetchValidated(target, { accept = "*/*", referer = null } = {}) {
+    return new Promise((resolve, reject) => {
+      const attempt = (currentUrl, redirectsLeft) => {
+        const transport = currentUrl.protocol === "https:" ? https : http;
+        const dialAbort = new AbortController();
+        const dialTimer = setTimeout(
+          () => dialAbort.abort(new Error("Upstream connect timeout")),
+          15000,
+        );
+        const headers = {
+          "user-agent":
+            "Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/605.1.15",
+          accept,
+          "accept-language": "en-US,en;q=0.9",
+          "accept-encoding": "identity",
+        };
+        if (referer) {
+          headers.referer = referer;
+          headers.origin = new URL(referer).origin;
+        }
+        const request = transport.request(
+          currentUrl.href,
+          {
+            method: "GET",
+            headers,
+            lookup: pinnedLookup(currentUrl.validatedAddresses),
+            signal: dialAbort.signal,
+          },
+          (response) => {
+            clearTimeout(dialTimer);
+            response.on("error", () => {});
+            const status = response.statusCode;
+            if (status >= 300 && status < 400 && response.headers.location) {
+              response.destroy();
+              if (redirectsLeft <= 0)
+                return reject(new Error("Too many redirects"));
+              let nextUrl;
+              try {
+                nextUrl = new URL(response.headers.location, currentUrl.href);
+              } catch {
+                return reject(new Error("Bad redirect target"));
+              }
+              validateUrl(nextUrl.href).then(
+                (validated) => attempt(validated, redirectsLeft - 1),
+                reject,
+              );
+              return;
+            }
+            const chunks = [];
+            let size = 0;
+            response.on("data", (chunk) => {
+              size += chunk.length;
+              if (size > MAX_TEXT_BYTES) {
+                response.destroy();
+                reject(new Error("Upstream text response exceeds 16 MB."));
+              } else {
+                chunks.push(chunk);
+              }
+            });
+            response.on("end", () =>
+              resolve({
+                status,
+                headers: response.headers,
+                body: Buffer.concat(chunks),
+              }),
+            );
+            response.on("error", reject);
+          },
+        );
+        request.on("error", (err) => {
+          clearTimeout(dialTimer);
+          reject(err);
+        });
+        request.setTimeout(15000, () => {
+          request.destroy(new Error("Upstream timeout"));
+        });
+        request.end();
+      };
+      attempt(target, 5);
+    });
   }
   server.register(async function (fastify) {
     // Relay request bodies byte-for-byte, including form and multipart POSTs.
@@ -1115,6 +1219,107 @@ export function registerMovieRelay(
         referer: "https://videm.xyz/",
       };
       return handleMovieProxy(req, reply);
+    });
+
+    // Resolved HLS for the hls-player page: maps a TMDB id to a signed
+    // playlist through the hls.lol content API, then serves the playlist
+    // with every entry rewritten back through /movie-proxy. The playlist
+    // host (totallyacdn.org) gets the embed referer it requires via the
+    // rewriteM3u8 rule; without it, segments 302 to an unrelated page.
+    // TMDB ids are digits only and season/episode are small ints, so no
+    // request parameter can steer the API URL anywhere unintended — and
+    // both the API and playlist responses still pass SSRF validation.
+    fastify.get("/hls-resolve", async (req, reply) => {
+      const type = req.query.type;
+      const id = req.query.id;
+      if (
+        (type !== "movie" && type !== "tv") ||
+        typeof id !== "string" ||
+        !/^\d{1,10}$/.test(id)
+      ) {
+        return reply.code(400).send("Invalid type or id parameter");
+      }
+      let apiPath = `/content/${type}/${id}`;
+      if (type === "tv") {
+        const s = Number(req.query.s);
+        const e = Number(req.query.e);
+        if (
+          !Number.isInteger(s) ||
+          !Number.isInteger(e) ||
+          s < 0 ||
+          e < 1 ||
+          s > 100 ||
+          e > 1000
+        ) {
+          return reply.code(400).send("Invalid season or episode parameter");
+        }
+        apiPath += `/${s}/${e}`;
+      }
+      let apiUrl;
+      try {
+        apiUrl = await validateUrl(`${hlsApiBase}${apiPath}`);
+      } catch (err) {
+        return reply.code(403).send(`SSRF validation failed: ${err.message}`);
+      }
+      let playlistHref;
+      try {
+        const apiRes = await fetchValidated(apiUrl, {
+          accept: "application/json",
+        });
+        if (apiRes.status !== 200)
+          throw new Error(`API answered ${apiRes.status}`);
+        const payload = JSON.parse(apiRes.body.toString("utf-8"));
+        if (
+          !payload ||
+          payload.found !== true ||
+          typeof payload.url !== "string"
+        )
+          return reply.code(404).send("No stream found for this title");
+        playlistHref = payload.url;
+      } catch (err) {
+        return reply.code(502).send(`Stream lookup failed: ${err.message}`);
+      }
+      let playlistUrl;
+      try {
+        playlistUrl = await validateUrl(playlistHref);
+      } catch (err) {
+        return reply.code(403).send(`SSRF validation failed: ${err.message}`);
+      }
+      try {
+        // The playlist host bounces throttled clients to an unrelated page;
+        // one retry after a short cooldown rides out a marginal throttle
+        // without hammering. Anything worse surfaces as a 502 and the
+        // viewer can try another source.
+        let playlistText = null;
+        for (let attempt = 0; attempt < 2 && !playlistText; attempt++) {
+          if (attempt > 0)
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+          const playlistRes = await fetchValidated(playlistUrl);
+          if (playlistRes.status !== 200)
+            throw new Error(`Playlist answered ${playlistRes.status}`);
+          const body = playlistRes.body.toString("utf-8");
+          // Never serve the bounce page as a playlist: the player would
+          // choke on HTML instead of retrying cleanly.
+          if (body.trimStart().startsWith("#EXTM3U")) playlistText = body;
+        }
+        if (!playlistText)
+          throw new Error("Playlist is not an m3u8 document");
+        const rewritten = await withRewriteSlot(() =>
+          rewriteM3u8(playlistText, playlistUrl),
+        );
+        console.log(
+          `[movie-proxy] hls-resolve ${type} ${id} -> ${playlistUrl.host}${playlistUrl.pathname.slice(0, 32)}`,
+        );
+        reply.header(
+          "Cache-Control",
+          "no-store, no-cache, must-revalidate, max-age=0",
+        );
+        reply.header("Pragma", "no-cache");
+        reply.type("application/vnd.apple.mpegurl");
+        reply.send(rewritten);
+      } catch (err) {
+        return reply.code(502).send(`Playlist fetch failed: ${err.message}`);
+      }
     });
 
     // Diagnostic beacon fired once by the injected relay client on startup.
