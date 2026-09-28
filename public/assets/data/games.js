@@ -1,5 +1,6 @@
 window.games = window.games || [];
 window.gamesloaded = false;
+window.gamesLoading = false;
 window.gamesLoadErrors = [];
 
 var gamesources = [
@@ -170,50 +171,10 @@ async function fetchjson(url) {
   }
 }
 
-async function loadgamesdata() {
-  var cached = await getcachedgames();
-  if (cached) {
-    window.games = cached;
-    window.gamesloaded = true;
-    window.dispatchEvent(new Event("gamesloaded"));
-    return window.games;
-  }
-
-  var results = await Promise.allSettled(
-    gamesources.map(function (file) {
-      var sourcename = file
-        .split("/")
-        .pop()
-        .replace(/\.json$/i, "");
-      return fetchjson(file).then(function (data) {
-        if (Array.isArray(data)) {
-          return data
-            .map(function (g) {
-              return normalizegame(g, sourcename);
-            })
-            .filter(Boolean);
-        } else if (data && Array.isArray(data.games)) {
-          return data.games
-            .map(function (g) {
-              return normalizegame(g, sourcename);
-            })
-            .filter(Boolean);
-        } else {
-          throw new Error("Unexpected catalog format: " + file);
-        }
-      });
-    }),
-  );
-
+function mergegames(lists) {
   var merged = [];
-  for (var i = 0; i < results.length; i++) {
-    if (results[i].status === "fulfilled") {
-      merged = merged.concat(results[i].value);
-    } else {
-      window.gamesLoadErrors.push(gamesources[i]);
-      console.error("Failed to load games source:", results[i].reason);
-    }
-  }
+  for (var i = 0; i < lists.length; i++)
+    if (lists[i]) merged = merged.concat(lists[i]);
 
   merged.sort(function (a, b) {
     var sourcecompare = (a.source || "").localeCompare(b.source || "");
@@ -241,14 +202,163 @@ async function loadgamesdata() {
     seenids.add(key);
   });
 
-  window.games = merged;
+  return merged;
+}
+
+var gamelistbyload = new Array(gamesources.length);
+var gameloadpromises = new Array(gamesources.length);
+// igroutka is ~4.5MB and most visitors never open that source, so the games
+// grid defers it until the source is actually selected. The player page sets
+// window.gamesLoadAll before this script runs because deep links can point
+// at any source.
+var gamessourcesdeferred = window.gamesLoadAll
+  ? []
+  : ["assets/data/igroutka.json"];
+
+function gamessourcename(file) {
+  return file
+    .split("/")
+    .pop()
+    .replace(/\.json$/i, "");
+}
+
+function updategamesloading() {
+  window.gamesLoading = gameloadpromises.some(function (p) {
+    return !!p;
+  });
+}
+
+// Publish each catalog as it arrives instead of leaving the library blank
+// until the slowest source finishes downloading.
+function publishgames() {
+  window.games = mergegames(gamelistbyload);
+  window.dispatchEvent(new Event("gamesupdated"));
+}
+
+function maybecachegames() {
+  var complete = gamelistbyload.every(function (list) {
+    return !!list;
+  });
+  if (
+    complete &&
+    !window.gamesLoadErrors.length &&
+    window.games &&
+    window.games.length
+  )
+    setcachedgames(window.games);
+}
+
+function loadgamesource(file, index) {
+  if (gamelistbyload[index]) return Promise.resolve(gamelistbyload[index]);
+  if (gameloadpromises[index]) return gameloadpromises[index];
+
+  var sourcename = gamessourcename(file);
+  var promise = fetchjson(file)
+    .then(function (data) {
+      var list;
+      if (Array.isArray(data)) {
+        list = data
+          .map(function (g) {
+            return normalizegame(g, sourcename);
+          })
+          .filter(Boolean);
+      } else if (data && Array.isArray(data.games)) {
+        list = data.games
+          .map(function (g) {
+            return normalizegame(g, sourcename);
+          })
+          .filter(Boolean);
+      } else {
+        throw new Error("Unexpected catalog format: " + file);
+      }
+      gamelistbyload[index] = list;
+      var errorindex = window.gamesLoadErrors.indexOf(file);
+      if (errorindex !== -1) window.gamesLoadErrors.splice(errorindex, 1);
+      publishgames();
+      maybecachegames();
+      return list;
+    })
+    .catch(function (reason) {
+      if (window.gamesLoadErrors.indexOf(file) === -1)
+        window.gamesLoadErrors.push(file);
+      console.error("Failed to load games source:", reason);
+      throw reason;
+    })
+    .finally(function () {
+      gameloadpromises[index] = null;
+      updategamesloading();
+    });
+
+  gameloadpromises[index] = promise;
+  updategamesloading();
+  return promise;
+}
+
+async function loadgamesdata() {
+  var cached = await getcachedgames();
+  if (cached) {
+    window.games = cached;
+    window.gamesloaded = true;
+    window.dispatchEvent(new Event("gamesloaded"));
+    return window.games;
+  }
+
+  var initial = [];
+  gamesources.forEach(function (file, index) {
+    if (gamessourcesdeferred.indexOf(file) === -1)
+      initial.push(
+        loadgamesource(file, index).catch(function () {
+          // errors are recorded in window.gamesLoadErrors
+        }),
+      );
+  });
+  await Promise.all(initial);
+
   window.gamesloaded = true;
-  // A temporarily failed source must not vanish from the library for an hour.
-  if (merged.length && !window.gamesLoadErrors.length) setcachedgames(merged);
-
   window.dispatchEvent(new Event("gamesloaded"));
-
   return window.games;
 }
+
+// Load one source by its short name ("igroutka", "velara", …). Resolves to
+// null for unknown names; rejections are swallowed here because the failure
+// is already recorded in window.gamesLoadErrors for the retry UI.
+window.gamesloadsource = function (name) {
+  var index = -1;
+  for (var i = 0; i < gamesources.length; i++)
+    if (gamessourcename(gamesources[i]) === String(name)) {
+      index = i;
+      break;
+    }
+  if (index === -1) return Promise.resolve(null);
+  return loadgamesource(gamesources[index], index).catch(function () {
+    return null;
+  });
+};
+
+window.gamesloadall = function () {
+  return Promise.all(
+    gamesources.map(function (file, index) {
+      return loadgamesource(file, index).catch(function () {
+        return null;
+      });
+    }),
+  );
+};
+
+window.gamesretryfailed = function () {
+  var failed = [];
+  gamesources.forEach(function (file, index) {
+    if (!gamelistbyload[index] && window.gamesLoadErrors.indexOf(file) !== -1)
+      failed.push(window.gamesloadsource(gamessourcename(file)));
+  });
+  return Promise.all(failed);
+};
+
+window.gameshasloaded = function (name) {
+  for (var i = 0; i < gamesources.length; i++)
+    if (gamessourcename(gamesources[i]) === String(name))
+      return !!gamelistbyload[i];
+  return false;
+};
 
 window.gamesready = window.gamesready || loadgamesdata();

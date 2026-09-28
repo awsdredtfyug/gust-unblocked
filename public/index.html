@@ -104,39 +104,48 @@
     <link rel="stylesheet" href="./css/nav.css?v=20260907.4" />
     <link rel="stylesheet" href="./css/main.css?v=20260907.1" />
     <script src="register-sw.js?v=20260907.1" defer></script>
-    <script src="/scramjet/scramjet.js" defer></script>
-    <script src="/controller/controller.api.js" defer></script>
     <script src="/js/scramjet-init.js?v=20260907.1"></script>
 
     <script>
       // Pre-warm the proxy controller so it's ready by the time the player
       // opens a game (cheats.html/search.html/load.js each get their own
       // Controller instance — this one just eats the cold-start cost early
-      // and shows a toast).
-      document.addEventListener(
-        "DOMContentLoaded",
-        function earlyinit() {
-          if (!window.aetherisProxy) {
-            console.warn(
-              "[init] aetherisProxy helper not loaded yet, skipping pre-warm",
-            );
-            return;
+      // and shows a toast). Starts only after the page has loaded and the
+      // browser is idle, so the homepage keeps its bandwidth and CPU first;
+      // weak devices, data-saver users and 2G connections skip it entirely.
+      window.addEventListener(
+        "load",
+        function () {
+          function warm() {
+            if (!window.aetherisProxy) return;
+            window.aetherisProxy
+              .getController()
+              .then(function () {
+                var t = document.getElementById("sj-toast");
+                if (t) {
+                  t.classList.add("show");
+                  setTimeout(function () {
+                    t.classList.remove("show");
+                  }, 3000);
+                }
+              })
+              .catch(function (err) {
+                console.error("[init] Scramjet pre-warm failed:", err);
+              });
           }
 
-          window.aetherisProxy
-            .getController()
-            .then(function () {
-              var t = document.getElementById("sj-toast");
-              if (t) {
-                t.classList.add("show");
-                setTimeout(function () {
-                  t.classList.remove("show");
-                }, 3000);
-              }
-            })
-            .catch(function (err) {
-              console.error("[init] Scramjet pre-warm failed:", err);
-            });
+          if (
+            Aetheris.storage.getItem("performanceMode") === "true" ||
+            document.documentElement.classList.contains("power-saving")
+          )
+            return;
+          var c = navigator.connection;
+          if (c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || "")))
+            return;
+
+          if (typeof window.requestIdleCallback === "function")
+            window.requestIdleCallback(warm, { timeout: 5000 });
+          else setTimeout(warm, 2500);
         },
         { once: true },
       );

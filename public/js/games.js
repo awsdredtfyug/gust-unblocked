@@ -25,6 +25,8 @@
   var STATE_KEY = "aetheris-games-state";
   var SCROLL_KEY = "aetheris-games-scroll";
   var restoredScroll = null;
+  var built = false;
+  var queuedupdate = null;
 
   function saveState() {
     try {
@@ -174,6 +176,9 @@
     ) {
       status.textContent += " · Some sources are unavailable.";
     }
+    if (window.gamesLoading && catalog.length) {
+      status.textContent += " · Loading more sources…";
+    }
     retry.hidden =
       !(window.gamesLoadErrors && window.gamesLoadErrors.length) &&
       !!catalog.length;
@@ -257,6 +262,7 @@
   }
 
   function build() {
+    built = true;
     catalog = Array.isArray(window.games) ? window.games : [];
     favorites = Aetheris.readList("favoritedGames");
     byId = Object.create(null);
@@ -309,6 +315,12 @@
     searchTimer = setTimeout(applyFilters, 120);
   });
   source.addEventListener("change", function () {
+    // Deferred sources (igroutka) load on demand; "all" pulls every source.
+    if (source.value === "all") {
+      if (typeof window.gamesloadall === "function") window.gamesloadall();
+    } else if (typeof window.gamesloadsource === "function") {
+      window.gamesloadsource(source.value);
+    }
     renderTags();
     applyFilters();
     closeFilters();
@@ -318,6 +330,15 @@
     render();
   });
   retry.addEventListener("click", function () {
+    if (typeof window.gamesretryfailed === "function") {
+      status.textContent = "Retrying failed sources…";
+      window.gamesretryfailed().then(function () {
+        refresh();
+        if (window.gamesLoadErrors && window.gamesLoadErrors.length)
+          status.textContent = "Some sources are still unavailable.";
+      });
+      return;
+    }
     if (Array.isArray(window.games) && window.games.length) build();
     else location.reload();
   });
@@ -443,7 +464,35 @@
     saveState();
     saveScroll();
   });
+  // Progressive catalog loading: the first source renders immediately and the
+  // rest merge in as they download. ids are re-keyed per merge, so refresh()
+  // rebuilds the lookup and re-renders without resetting filters or scroll.
+  function refresh() {
+    catalog = Array.isArray(window.games) ? window.games : [];
+    byId = Object.create(null);
+    catalog.forEach(function (game) {
+      byId[game.id] = game;
+    });
+    renderTags();
+    applyFilters(false);
+  }
+
+  function onupdate() {
+    if (!built) {
+      build();
+      return;
+    }
+    if (queuedupdate) return;
+    queuedupdate = setTimeout(function () {
+      queuedupdate = null;
+      refresh();
+    }, 120);
+  }
+
   if (window.gamesloaded) build();
-  else window.addEventListener("gamesloaded", build, { once: true });
+  else {
+    window.addEventListener("gamesupdated", onupdate);
+    window.addEventListener("gamesloaded", onupdate);
+  }
   loadPopular();
 })();

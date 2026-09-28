@@ -23,8 +23,9 @@
     <script src="./js/theme.js?v=20260907.1"></script>
 
     <script defer src="./js/preload.js?v=20260907.1"></script>
-    <script src="/scramjet/scramjet.js" defer></script>
-    <script src="/controller/controller.api.js" defer></script>
+    <!-- scramjet bundles are loaded on demand by scramjet-init.js when the
+         game actually needs the proxy (external items); local games skip
+         ~245KB of JS parsing. -->
     <script src="/js/scramjet-init.js?v=20260907.1"></script>
     <script src="./js/dm-shared.js?v=20260907.1"></script>
 
@@ -367,7 +368,7 @@
     </div>
 
     <script defer src="./register-sw.js?v=20260907.1"></script>
-    <script defer src="./js/player-data.js?v=20260907.1"></script>
+    <script defer src="./js/player-data.js?v=20260928.2"></script>
     <script defer src="./js/load.js?v=20260917.1"></script>
 
     <script>
