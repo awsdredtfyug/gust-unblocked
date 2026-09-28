@@ -1294,7 +1294,11 @@ export function registerMovieRelay(
         for (let attempt = 0; attempt < 2 && !playlistText; attempt++) {
           if (attempt > 0)
             await new Promise((resolve) => setTimeout(resolve, 2000));
-          const playlistRes = await fetchValidated(playlistUrl);
+          // the playlist endpoint bounces referer-less requests the same
+          // way it bounces throttled ones — always identify as an embed
+          const playlistRes = await fetchValidated(playlistUrl, {
+            referer: TOTALLYACDN_REFERER,
+          });
           if (playlistRes.status !== 200)
             throw new Error(`Playlist answered ${playlistRes.status}`);
           const body = playlistRes.body.toString("utf-8");
