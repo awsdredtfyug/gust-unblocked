@@ -37,6 +37,14 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
         "content-encoding": "gzip",
       });
       res.end("not gzip");
+    } else if (req.url === "/big-html") {
+      // larger than the relay's 4 MB HTML/CSS document cap
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(
+        "<!doctype html><html><body>" +
+          "x".repeat(4 * 1024 * 1024 + 64) +
+          "</body></html>",
+      );
     } else if (req.url === "/ts-as-html") {
       // Videm's segment host serves MPEG-TS video bytes labeled as text/html.
       res.writeHead(200, { "content-type": "text/html; charset=UTF-8" });
@@ -218,6 +226,14 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
       const result = await app.inject(path("/bad-compression"));
       assert.equal(result.statusCode, 502);
       assert.ok(result.body.toLowerCase().includes("decode"));
+    },
+  );
+  await t.test(
+    "oversized HTML documents are rejected before rewriting",
+    async () => {
+      const result = await app.inject(path("/big-html"));
+      assert.equal(result.statusCode, 502);
+      assert.match(result.body, /exceeds 4 MB/);
     },
   );
   await t.test(

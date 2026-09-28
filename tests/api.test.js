@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   writeFileSync,
   existsSync,
@@ -12,11 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, get as httpGet } from "node:http";
 import { WebSocket } from "ws";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-let child, base, runtime, provider, alice, bob;
+let child, base, runtime, provider, alice, bob, legacyToken;
 const device = () => randomBytes(32).toString("hex");
 const headers = (token) => ({
   "Content-Type": "application/json",
@@ -70,12 +71,30 @@ before(async () => {
     });
   });
   await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+
+  // A user file as written before commit 0b6c23ea: the session is keyed by
+  // the raw 48-char token. Startup migration must re-key it to sha256(token).
+  legacyToken = randomBytes(36).toString("base64url");
+  mkdirSync(join(runtime, "database"), { recursive: true });
+  writeFileSync(
+    join(runtime, "database", "legacyuser.json"),
+    JSON.stringify({
+      username: "LegacyUser",
+      passwordHash: "scrypt:" + "0".repeat(32) + ":" + "0".repeat(128),
+      ip: "127.0.0.1",
+      createdAt: Date.now(),
+      sessions: { [legacyToken]: { ip: "127.0.0.1", createdAt: Date.now() } },
+      dms: {},
+    }),
+  );
+
   child = spawn(process.execPath, [join(root, "index.js")], {
     cwd: runtime,
     env: {
       ...process.env,
       PORT: "0",
       HOST: "127.0.0.1",
+      MAX_SSE_PER_IP: "3",
       REPORT_WEBHOOK_URL: "",
       STATS_WEBHOOK_URL: "",
       CRAX_GPT_KEY: "local-test-only",
@@ -230,6 +249,51 @@ test("expired sessions cannot delete an account", async () => {
   assert.equal(existsSync(path), true);
 });
 
+test("a stored session key cannot be replayed as a bearer token", async () => {
+  const result = await register("StoredKeyReplay");
+  assert.equal(result.status, 200);
+
+  const path = join(runtime, "database", "storedkeyreplay.json");
+  const storedKey = Object.keys(
+    JSON.parse(readFileSync(path, "utf8")).sessions,
+  )[0];
+  assert.match(storedKey, /^[a-f0-9]{64}$/);
+
+  const replay = await api("/api/accounts/me", {
+    headers: headers(storedKey),
+  });
+  assert.equal(replay.status, 401);
+
+  // a rejected replay must not evict the real session from the index
+  const me = await api("/api/accounts/me", {
+    headers: headers(result.data.token),
+  });
+  assert.equal(me.status, 200);
+  assert.equal(me.data.username, "StoredKeyReplay");
+});
+
+test("legacy raw-token sessions migrate to hashed keys and keep working", async () => {
+  const path = join(runtime, "database", "legacyuser.json");
+  // startup migration re-keyed the session
+  const keys = Object.keys(JSON.parse(readFileSync(path, "utf8")).sessions);
+  assert.equal(keys.length, 1);
+  assert.match(keys[0], /^[a-f0-9]{64}$/);
+  assert.notEqual(keys[0], legacyToken);
+
+  // the raw token still authenticates...
+  const me = await api("/api/accounts/me", {
+    headers: headers(legacyToken),
+  });
+  assert.equal(me.status, 200);
+  assert.equal(me.data.username, "LegacyUser");
+
+  // ...but the migrated stored key does not
+  const replay = await api("/api/accounts/me", {
+    headers: headers(keys[0]),
+  });
+  assert.equal(replay.status, 401);
+});
+
 test("reports do not falsely succeed when the webhook is not configured", async () => {
   const result = await api("/api/report", {
     method: "POST",
@@ -259,6 +323,19 @@ test("movie relay rejects private targets and malformed referers", async () => {
     base + "/movie-proxy?url=https%3A%2F%2Fexample.com&referer=bad",
   );
   assert.equal(res.status, 400);
+});
+
+test("movie-ping is rate limited", async () => {
+  let limited = false;
+  for (let i = 0; i < 65; i++) {
+    const res = await fetch(base + "/movie-ping?v=test&origin=test");
+    if (res.status === 429) {
+      limited = true;
+      break;
+    }
+    assert.equal(res.status, 204);
+  }
+  assert.equal(limited, true);
 });
 
 test("TMDB passthrough injects the server key and forwards queries", async () => {
@@ -298,6 +375,17 @@ test("AI login option, model defaults, and streaming work with a local provider 
     body: JSON.stringify({ prompt: "test", n: 999 }),
   });
   assert.equal(invalid.status, 400);
+
+  // anonymous AI is allowed by default, but oversized text is rejected
+  // before any upstream spend
+  const oversized = await api("/api/ai/chat", {
+    method: "POST",
+    headers: headers(alice.data.token),
+    body: JSON.stringify({
+      messages: [{ role: "user", content: "x".repeat(200_001) }],
+    }),
+  });
+  assert.equal(oversized.status, 413);
 });
 
 test("a malformed WebSocket upstream cannot crash the server", async () => {
@@ -441,6 +529,73 @@ test("lc-relay rejects cross-origin upgrades and accepts same-origin hosts", asy
   assert.equal((await api("/online-count")).status, 200);
 });
 
+test("wisp rejects cross-origin WebSocket upgrades and accepts same-origin ones", async () => {
+  const wsBase = base.replace("http:", "ws:");
+
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsBase + "/wisp/", {
+      headers: { origin: "https://evil.example" },
+    });
+    const timer = setTimeout(
+      () => reject(new Error("cross-origin wisp upgrade hung")),
+      5000,
+    );
+    ws.on("open", () => {
+      clearTimeout(timer);
+      ws.close();
+      reject(new Error("cross-origin wisp upgrade was accepted"));
+    });
+    const finish = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    ws.on("error", finish);
+    ws.on("close", finish);
+  });
+
+  // same-origin clients still complete the upgrade
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsBase + "/wisp/", {
+      headers: { origin: base },
+    });
+    const timer = setTimeout(
+      () => reject(new Error("same-origin wisp upgrade timed out")),
+      5000,
+    );
+    ws.on("open", () => {
+      clearTimeout(timer);
+      ws.close();
+      resolve();
+    });
+    ws.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+  assert.equal((await api("/online-count")).status, 200);
+});
+
+test("the online counter caps SSE connections per IP", async () => {
+  const open = () =>
+    new Promise((resolve, reject) => {
+      const req = httpGet(base + "/online", (res) => resolve({ req, res }));
+      req.on("error", reject);
+    });
+  const streams = [];
+  try {
+    for (let i = 0; i < 3; i++) {
+      const { req, res } = await open();
+      assert.equal(res.statusCode, 200);
+      streams.push(req);
+    }
+    const { req, res } = await open();
+    assert.equal(res.statusCode, 503);
+    req.destroy();
+  } finally {
+    for (const req of streams) req.destroy();
+  }
+});
+
 test("account deletion removes counterpart conversations", async () => {
   const result = await api("/api/accounts/delete", {
     method: "DELETE",
@@ -453,4 +608,28 @@ test("account deletion removes counterpart conversations", async () => {
   });
   assert.equal(inbox.data.conversations.length, 0);
   assert.equal(existsSync(join(runtime, "database", "testbob.json")), false);
+});
+
+test("authenticated API GETs are rate limited per account", async () => {
+  const account = await register("GetLimitUser");
+  assert.equal(account.status, 200);
+
+  let limited = false;
+  for (let i = 0; i < 320; i++) {
+    const res = await api("/api/accounts/me", {
+      headers: headers(account.data.token),
+    });
+    if (res.status === 429) {
+      limited = true;
+      break;
+    }
+    assert.equal(res.status, 200);
+  }
+  assert.equal(limited, true);
+
+  // the limit is per account: another session is unaffected
+  const other = await api("/api/accounts/me", {
+    headers: headers(alice.data.token),
+  });
+  assert.equal(other.status, 200);
 });

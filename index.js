@@ -29,6 +29,7 @@ import { createRateLimiter } from "./lib/rate-limit.js";
 import { downloadPublicImage, resolvePublicUrl } from "./lib/public-network.js";
 import { registerImageProxy } from "./lib/image-proxy.js";
 import { uniqueOnlineCount } from "./lib/online.js";
+import { websocketOriginAllowed } from "./lib/ws-origin.js";
 
 // Load local development configuration before any feature reads process.env.
 // Values supplied by the host environment keep precedence over .env values.
@@ -133,6 +134,18 @@ function tokenkey(token) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+// Every key this server writes is a 64-hex sha256. Tokens themselves are
+// 48-char base64url, so a 64-hex *presented* token can only be a stored key
+// that leaked — never a key we wrote before the hashing change. Lookups that
+// accept a legacy raw key must exclude 64-hex values, or a leaked stored key
+// would be accepted as a bearer token (and could even evict the real session
+// from the in-memory index).
+const HASHED_KEY = /^[a-f0-9]{64}$/;
+
+function islegacykey(value) {
+  return typeof value === "string" && !HASHED_KEY.test(value);
+}
+
 function safefilename(name) {
   return name.toLowerCase().replace(/[^a-z0-9_\-.]/g, "_");
 }
@@ -207,10 +220,12 @@ function finduser(token) {
   if (!username) return null;
 
   const user = readuser(username);
-  // new sessions are keyed by sha256(token); rows written before the change
-  // kept the raw token as the key. accept both so an upgrade doesn't log
-  // everyone out — the legacy rows age out via SESSION_TTL/pruning.
-  const session = user?.sessions?.[tokenkey(token)] ?? user?.sessions?.[token];
+  // sha256(token) is the current key. Pre-hash rows kept the raw 48-char
+  // token as the key and are accepted only while they are genuinely
+  // legacy-shaped; startup migrates them to hashed keys (see rebuildindices).
+  const session =
+    user?.sessions?.[tokenkey(token)] ??
+    (islegacykey(token) ? user?.sessions?.[token] : undefined);
   if (!user || !session) {
     forgettoken(token);
     return null;
@@ -251,7 +266,10 @@ function prunesessions(user, keeptoken) {
   if (kept.size === all.length) return; // nothing dropped
   user.sessions = Object.fromEntries(entries);
   for (const [t] of all) {
-    if (!kept.has(t)) forgettoken(t);
+    // `t` is a storage key, not a bearer token — delete it from the index
+    // directly (forgettoken applies bearer-shaped rules and would skip a
+    // 64-hex key).
+    if (!kept.has(t)) tokenindex.delete(t);
   }
 }
 
@@ -298,9 +316,12 @@ function indexuser(u) {
 
 // tokenindex maps a *storage key* to a username. Sessions created since the
 // hashing change are keyed by sha256(token); rows from before it keep the raw
-// token as the key, so reads try the hash first and fall back.
+// token as the key, so reads try the hash first and fall back for genuinely
+// legacy-shaped values only.
 function tokenlookup(token) {
-  return tokenindex.get(tokenkey(token)) ?? tokenindex.get(token);
+  const hashed = tokenindex.get(tokenkey(token));
+  if (hashed) return hashed;
+  return islegacykey(token) ? tokenindex.get(token) : undefined;
 }
 
 function remembertoken(token, username) {
@@ -308,25 +329,49 @@ function remembertoken(token, username) {
 }
 
 function forgettoken(token) {
-  // accept either a raw bearer token or its storage key; deleting a key
-  // that isn't indexed is a harmless no-op
-  tokenindex.delete(token);
+  // `token` is a bearer token: drop its hashed index entry, and for legacy
+  // raw tokens the raw entry too. A 64-hex value is a storage key that leaked,
+  // not a token — never let it delete the stored entry it names.
   tokenindex.delete(tokenkey(token));
+  if (islegacykey(token)) tokenindex.delete(token);
 }
 
 function rebuildindices() {
   tokenindex.clear();
   usernames.clear();
   deviceindex.clear();
+  let migrated = 0;
   for (const u of allusers()) {
     indexuser(u);
     if (!u.sessions) continue;
-    for (const token of Object.keys(u.sessions)) {
-      tokenindex.set(token, u.username.toLowerCase());
+
+    // One-time upgrade: re-key sessions still stored under the raw 48-char
+    // token so a leaked user file holds nothing that works as a bearer.
+    let changed = false;
+    for (const key of Object.keys(u.sessions)) {
+      if (!islegacykey(key)) continue;
+      u.sessions[tokenkey(key)] = u.sessions[key];
+      delete u.sessions[key];
+      changed = true;
+      migrated++;
+    }
+    if (changed) {
+      try {
+        writeuser(u);
+      } catch (err) {
+        // keep the raw key in memory and on disk; the legacy fallback in
+        // finduser still accepts it until a later startup can migrate
+        console.error(`could not migrate sessions for ${u.username}:`, err);
+      }
+    }
+
+    for (const key of Object.keys(u.sessions)) {
+      tokenindex.set(key, u.username.toLowerCase());
     }
   }
   console.log(
-    `indices loaded: ${usernames.size} users, ${tokenindex.size} sessions, ${deviceindex.size} devices`,
+    `indices loaded: ${usernames.size} users, ${tokenindex.size} sessions, ${deviceindex.size} devices` +
+      (migrated ? ` (${migrated} legacy sessions migrated)` : ""),
   );
 }
 rebuildindices();
@@ -445,6 +490,13 @@ Object.assign(wisp.options, {
     /(^|\.)simpcity\.su$/i,
   ],
   port_blacklist: [8080],
+  // Bound what a single Wisp connection can do. The defaults are -1
+  // (unlimited), which lets any anonymous client open unbounded upstream
+  // streams through the VPS; 128 total / 16 per hostname is far above what
+  // real browsing needs while making port-scanning and bandwidth laundering
+  // impractical. Limits are per WebSocket connection.
+  stream_limit_total: 128,
+  stream_limit_per_host: 16,
   dns_servers: ["1.1.1.3", "1.0.0.3"],
 });
 
@@ -456,6 +508,29 @@ const clients = new Set();
 // an id — old cached shells, bots, health checks — count individually.
 const clientids = new Map();
 let broadcastpending = null;
+
+// Bound the online-counter fan-out: every SSE stream holds a socket and gets
+// a heartbeat every 30 s, so without caps one host can exhaust file
+// descriptors. The per-IP limit is deliberately generous (a school behind one
+// NAT opens many streams); the total cap is the real protection.
+function envcount(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+const MAX_SSE_CLIENTS = envcount("MAX_SSE_CLIENTS", 2000);
+const MAX_SSE_PER_IP = envcount("MAX_SSE_PER_IP", 128);
+const sseperip = new Map();
+
+// Remove an SSE stream everywhere it is tracked (close handler, heartbeat and
+// broadcast write failures).
+function dropclient(res) {
+  if (!clients.delete(res)) return;
+  clientids.delete(res);
+  const ip = res.aetherisip;
+  const n = (sseperip.get(ip) || 1) - 1;
+  if (n <= 0) sseperip.delete(ip);
+  else sseperip.set(ip, n);
+}
 
 function onlinecount() {
   return uniqueOnlineCount(clients, clientids);
@@ -471,7 +546,7 @@ function broadcastcount() {
       try {
         res.write(msg);
       } catch {
-        clients.delete(res);
+        dropclient(res);
       }
     }
   }, 50);
@@ -483,7 +558,7 @@ setInterval(() => {
     try {
       res.write(": heartbeat\n\n");
     } catch {
-      clients.delete(res);
+      dropclient(res);
     }
   }
 }, 30_000);
@@ -492,6 +567,14 @@ setInterval(() => {
 
 function handleupgrade(req, socket, head) {
   if (req.url.endsWith("/wisp/")) {
+    // Reject cross-origin upgrades: without this any website could speak the
+    // Wisp protocol to this endpoint from a visitor's browser and use the
+    // server (and their connection) as a TCP relay. Non-browser clients with
+    // no Origin header still work.
+    if (!websocketOriginAllowed(req)) {
+      socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      return;
+    }
     wisp.routeRequest(req, socket, head);
     return;
   }
@@ -605,6 +688,7 @@ fastify.addHook("onRequest", async (req, reply) => {
   const isModels = req.method === "GET" && path === "/api/ai/models";
   const isTmdb = req.method === "GET" && path.startsWith("/api/tmdb/");
   const isImg = req.method === "GET" && path === "/img";
+  const isPing = req.method === "GET" && path === "/movie-ping";
   const isRelay =
     req.method !== "OPTIONS" &&
     (path === "/movie-proxy" ||
@@ -612,7 +696,23 @@ fastify.addHook("onRequest", async (req, reply) => {
       // subtitle compatibility route calls the same proxy handler; keep it
       // under the same cap or it becomes an unmetered relay bypass
       path === "/api.php");
-  if (req.method !== "POST" && !isModels && !isTmdb && !isRelay && !isImg)
+  // every other authenticated GET does blocking file I/O per request, so a
+  // single account must not be able to hammer them; keyed per account when a
+  // bearer token is present, otherwise per IP
+  const isApiGet =
+    req.method === "GET" &&
+    path.startsWith("/api/") &&
+    !isModels &&
+    !isTmdb;
+  if (
+    req.method !== "POST" &&
+    !isModels &&
+    !isTmdb &&
+    !isRelay &&
+    !isImg &&
+    !isPing &&
+    !isApiGet
+  )
     return;
   let limit = 0,
     windowMs = 60000,
@@ -651,9 +751,28 @@ fastify.addHook("onRequest", async (req, reply) => {
   else if (path === "/api/ai/images") {
     limit = 6;
     windowMs = 60000;
+  } else if (isPing) {
+    // diagnostic beacon: useful, but unmetered it writes attacker-controlled
+    // text to pm2 logs on every request
+    limit = 60;
+    group = "movie-ping";
+  } else if (isApiGet) {
+    // normal chat polling is ~40 requests/min/account; 300 leaves headroom
+    // while bounding the per-request file I/O one session can trigger
+    limit = 300;
+    group = "api-get";
   }
   if (!limit) return;
-  const result = consumeRate(`${group}:${getclientip(req)}`, limit, windowMs);
+  let ratekey = getclientip(req);
+  if (isApiGet) {
+    // key by resolved account, not by the raw bearer: random/garbage tokens
+    // then fall back to the IP bucket instead of minting a new limiter entry
+    // per request. tokenlookup is an O(1) map read.
+    const token = gettoken(req);
+    const account = token ? tokenlookup(token) : null;
+    if (account) ratekey = `acct:${account}`;
+  }
+  const result = consumeRate(`${group}:${ratekey}`, limit, windowMs);
   if (!result.allowed)
     return reply
       .header("Retry-After", result.retryAfter)
@@ -665,6 +784,16 @@ fastify.addHook("onRequest", async (req, reply) => {
 });
 
 fastify.get("/online", (req, reply) => {
+  const ip = getclientip(req);
+  if (
+    clients.size >= MAX_SSE_CLIENTS ||
+    (sseperip.get(ip) || 0) >= MAX_SSE_PER_IP
+  ) {
+    return reply
+      .code(503)
+      .header("Retry-After", "30")
+      .send("Too many online-counter connections. Try again shortly.");
+  }
   reply.hijack();
   const res = reply.raw;
   res.writeHead(200, {
@@ -689,11 +818,12 @@ fastify.get("/online", (req, reply) => {
     // malformed URL counts as an anonymous connection
   }
   clients.add(res);
+  res.aetherisip = ip;
+  sseperip.set(ip, (sseperip.get(ip) || 0) + 1);
   if (clientid) clientids.set(res, clientid);
   broadcastcount();
   req.raw.on("close", () => {
-    clients.delete(res);
-    clientids.delete(res);
+    dropclient(res);
     broadcastcount();
   });
 });
@@ -973,7 +1103,8 @@ async function deleteaccount(lc) {
     const user = readuser(lc);
     if (!user || deletingUsers.has(lc)) return null;
     deletingUsers.add(lc);
-    for (const token of Object.keys(user.sessions || {})) forgettoken(token);
+    // storage keys, not bearer tokens — delete them from the index directly
+    for (const key of Object.keys(user.sessions || {})) tokenindex.delete(key);
     return user;
   });
   if (!victim) return false;
@@ -993,7 +1124,8 @@ async function deleteaccount(lc) {
     await withuserlock(lc, () => {
       const fresh = readuser(lc);
       if (!fresh) return;
-      for (const t of Object.keys(fresh.sessions || {})) forgettoken(t);
+      for (const key of Object.keys(fresh.sessions || {}))
+        tokenindex.delete(key);
       deleteuser(fresh);
     });
     return true;
@@ -1465,6 +1597,49 @@ const AI_CHAT_TIMEOUT_MS = 5 * 60 * 1000;
 const AI_IMAGE_TIMEOUT_MS = 3 * 60 * 1000;
 const AI_IMAGE_DOWNLOAD_TIMEOUT_MS = 30 * 1000;
 
+// Anonymous AI is allowed by default (AI_REQUIRE_LOGIN=true opts into a login
+// gate). These caps bound what one visitor can spend without an account:
+// total prompt text per chat request and concurrent upstream requests.
+const AI_MAX_TEXT_CHARS = 200_000;
+const AI_MAX_CONCURRENT_PER_IP = 3;
+const AI_MAX_CONCURRENT = 24;
+
+const aiactive = new Map(); // client ip -> in-flight upstream requests
+let aiactiveTotal = 0;
+
+function acquireAiSlot(ip) {
+  if (aiactiveTotal >= AI_MAX_CONCURRENT) return false;
+  if ((aiactive.get(ip) || 0) >= AI_MAX_CONCURRENT_PER_IP) return false;
+  aiactive.set(ip, (aiactive.get(ip) || 0) + 1);
+  aiactiveTotal++;
+  return true;
+}
+
+function releaseAiSlot(ip) {
+  const n = (aiactive.get(ip) || 1) - 1;
+  if (n <= 0) aiactive.delete(ip);
+  else aiactive.set(ip, n);
+  if (aiactiveTotal > 0) aiactiveTotal--;
+}
+
+// Characters of user-visible text in a chat request, ignoring base64 image
+// parts (those are bounded by the 20 MB body limit and the client trimmer).
+function chatTextSize(messages) {
+  let total = 0;
+  for (const message of messages) {
+    if (typeof message.content === "string") {
+      total += message.content.length;
+      continue;
+    }
+    if (Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (typeof part?.text === "string") total += part.text.length;
+      }
+    }
+  }
+  return total;
+}
+
 function aiTimeout(ms) {
   return AbortSignal.timeout(ms);
 }
@@ -1521,6 +1696,12 @@ fastify.post(
         .send({ ok: false, error: "AI is not configured on this server." });
     if (process.env.AI_REQUIRE_LOGIN === "true" && !requireauth(req, reply))
       return;
+    const clientip = getclientip(req);
+    if (!acquireAiSlot(clientip))
+      return reply.code(429).send({
+        ok: false,
+        error: "Too many AI requests in flight. Try again in a moment.",
+      });
     const abort = new AbortController();
     const stop = () => {
       if (!reply.raw.writableFinished) abort.abort();
@@ -1547,6 +1728,11 @@ fastify.post(
           .code(400)
           .send({ ok: false, error: "messages must be a non-empty array." });
       }
+      if (chatTextSize(messages) > AI_MAX_TEXT_CHARS)
+        return reply.code(413).send({
+          ok: false,
+          error: `Message text is too large (max ${AI_MAX_TEXT_CHARS.toLocaleString("en-US")} characters).`,
+        });
       if (
         (model !== undefined &&
           (typeof model !== "string" || model.length > 200)) ||
@@ -1611,6 +1797,7 @@ fastify.post(
       if (!reply.raw.destroyed && !reply.sent) sendAiFailure(reply, e, "chat");
     } finally {
       reply.raw.removeListener("close", stop);
+      releaseAiSlot(clientip);
     }
   },
 );
@@ -1662,6 +1849,12 @@ fastify.post(
         .send({ ok: false, error: "AI is not configured on this server." });
     if (process.env.AI_REQUIRE_LOGIN === "true" && !requireauth(req, reply))
       return;
+    const clientip = getclientip(req);
+    if (!acquireAiSlot(clientip))
+      return reply.code(429).send({
+        ok: false,
+        error: "Too many AI requests in flight. Try again in a moment.",
+      });
     try {
       const { prompt, model, n, size, images } = req.body || {};
       if (
@@ -1790,6 +1983,8 @@ fastify.post(
       reply.send(data);
     } catch (e) {
       sendAiFailure(reply, e, "images");
+    } finally {
+      releaseAiSlot(clientip);
     }
   },
 );

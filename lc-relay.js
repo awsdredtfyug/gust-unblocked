@@ -20,6 +20,7 @@
 //   8 PING       any   [op][echo u64]  -> reply 9 PONG [op][echo u64] to the sender
 
 import { WebSocket, WebSocketServer } from "ws";
+import { websocketOriginAllowed } from "./lib/ws-origin.js";
 
 const MAX_PLAYERS = 4;
 const IDLE_TIMEOUT_MS = 40 * 1000;
@@ -349,24 +350,9 @@ function handleJoin(ws, frame) {
  * Same semantics as wss://<origin>/lc-relay on the standalone relay.
  */
 function lcRelayUpgrade(req, socket, head) {
-  // WebSockets are not subject to CORS, so without an Origin check any
-  // website could open rooms on this relay or brute-force join codes from a
-  // visitor's browser. Compare the Origin host to the Host header (works for
-  // any deployment, including forks and localhost); non-browser clients that
-  // send no Origin are allowed through.
-  const origin = req.headers.origin;
-  if (typeof origin === "string" && origin) {
-    let originHost;
-    try {
-      originHost = new URL(origin).host;
-    } catch {
-      socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
-      return;
-    }
-    if (req.headers.host && originHost !== req.headers.host) {
-      socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
-      return;
-    }
+  if (!websocketOriginAllowed(req)) {
+    socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+    return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);

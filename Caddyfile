@@ -87,6 +87,20 @@ https:// {
 	# without this every cold visit pays the full uncompressed weight.
 	encode zstd gzip
 
+	# Baseline security headers for every host this block serves (app pages,
+	# API, static assets and relayed movie documents). /game-assets keeps its
+	# own -X-Content-Type-Options below because those raw game builds rely on
+	# content sniffing. Referrer-Policy is strict-origin rather than
+	# no-referrer on purpose: cross-origin subresources see only the origin,
+	# so signed /movie-proxy query strings cannot leak, while providers that
+	# expect a Referer header still receive one.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+	}
+
 	# CORS Preflight — answered here for every host EXCEPT the vhosts with
 	# their own OPTIONS handling (crax.lol profile, hosting, gpt) and the
 	# /api/* routes. Wildcard CORS on the authenticated API let any website

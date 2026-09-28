@@ -1,0 +1,22 @@
+// Static checks for deployment files that are not exercised by the app tests.
+// These guard against silent regressions (security headers removed from the
+// Caddyfile, deploy verification gate dropped, ...).
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const caddyfile = readFileSync(
+  fileURLToPath(new URL("../Caddyfile", import.meta.url)),
+  "utf8",
+);
+
+test("the site block sends baseline security headers", () => {
+  assert.match(
+    caddyfile,
+    /Strict-Transport-Security "max-age=31536000; includeSubDomains"/,
+  );
+  assert.match(caddyfile, /X-Content-Type-Options "nosniff"/);
+  assert.match(caddyfile, /Referrer-Policy "strict-origin-when-cross-origin"/);
+  assert.match(caddyfile, /X-Frame-Options "SAMEORIGIN"/);
+});

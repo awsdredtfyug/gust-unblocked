@@ -2,12 +2,18 @@ import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
 import zlib from "node:zlib";
+import { promisify } from "node:util";
 import { pipeline } from "node:stream";
 import { resolvePublicUrl, pinnedLookup } from "./lib/public-network.js";
 
 const MAX_REDIRECTS = 5;
 const PROXY_ROUTE = "/movie-proxy";
 const MAX_TEXT_BYTES = 16 * 1024 * 1024;
+// Documents that get rewritten in-memory need a tighter cap than JSON/HLS
+// payloads: player HTML/CSS is far below 4 MB in practice, and a smaller
+// document means a shorter synchronous rewrite pass on the event loop.
+const MAX_DOC_BYTES = 4 * 1024 * 1024;
+const MAX_SCRIPT_BYTES = 8 * 1024 * 1024;
 
 // Fail-closed policy for relayed provider documents: scripts and network
 // calls may only reach the relay itself. Images are the one exception that
@@ -99,6 +105,61 @@ function decompressBuffer(buffer, encoding) {
       throw new Error("Unsupported upstream encoding.");
   }
   return buffer;
+}
+
+// Async twin of decompressBuffer. zlib's *Sync calls block the event loop for
+// every other request while a multi-megabyte body is decoded (measured ~16 ms
+// for 5.5 MB of gzip on a desktop, more on the VPS). The sync version stays
+// exported for tests and small callers.
+const gunzipAsync = promisify(zlib.gunzip);
+const brotliDecompressAsync = promisify(zlib.brotliDecompress);
+const inflateAsync = promisify(zlib.inflate);
+const zstdDecompressAsync = HAS_ZSTD ? promisify(zlib.zstdDecompress) : null;
+
+async function decompressBufferAsync(
+  buffer,
+  encoding,
+  maxBytes = MAX_TEXT_BYTES,
+) {
+  if (!encoding) return buffer;
+  for (const enc of encoding
+    .toLowerCase()
+    .split(",")
+    .map((v) => v.trim())
+    .reverse()) {
+    const options = { maxOutputLength: maxBytes };
+    if (enc === "gzip") buffer = await gunzipAsync(buffer, options);
+    else if (enc === "br") buffer = await brotliDecompressAsync(buffer, options);
+    else if (enc === "deflate") buffer = await inflateAsync(buffer, options);
+    else if (enc === "zstd" && HAS_ZSTD)
+      buffer = await zstdDecompressAsync(buffer, options);
+    else if (enc !== "identity")
+      throw new Error("Unsupported upstream encoding.");
+  }
+  return buffer;
+}
+
+// The rewriters are synchronous string passes over the whole document; a
+// handful of concurrent multi-megabyte rewrites would block the single event
+// loop for every other request. Cap how many run at once (queued work is
+// already bounded by the relay's per-IP rate limit).
+const MAX_CONCURRENT_REWRITES = 6;
+let activerewrites = 0;
+const rewritewaiters = [];
+
+async function withRewriteSlot(fn) {
+  if (activerewrites >= MAX_CONCURRENT_REWRITES) {
+    await new Promise((resolve) => rewritewaiters.push(resolve));
+  } else {
+    activerewrites++;
+  }
+  try {
+    return fn();
+  } finally {
+    const next = rewritewaiters.shift();
+    if (next) next();
+    else if (activerewrites > 0) activerewrites--;
+  }
 }
 
 function isRealHtml(text) {
@@ -847,16 +908,25 @@ export function registerMovieRelay(
       const chunks = [];
       let decompressed;
       try {
+        const maxTextBytes =
+          isHtml || isCss
+            ? MAX_DOC_BYTES
+            : isJs
+              ? MAX_SCRIPT_BYTES
+              : MAX_TEXT_BYTES;
         let size = 0;
         for await (const chunk of upstreamRes) {
           size += chunk.length;
-          if (size > MAX_TEXT_BYTES)
-            throw new Error("Upstream text response exceeds 16 MB.");
+          if (size > maxTextBytes)
+            throw new Error(
+              `Upstream text response exceeds ${Math.round(maxTextBytes / 1024 / 1024)} MB.`,
+            );
           chunks.push(chunk);
         }
-        decompressed = decompressBuffer(
+        decompressed = await decompressBufferAsync(
           Buffer.concat(chunks),
           upstreamRes.headers["content-encoding"],
+          maxTextBytes,
         );
       } catch (error) {
         upstreamRes.destroy();
@@ -906,7 +976,9 @@ export function registerMovieRelay(
         (trimmedStart.startsWith("{") || trimmedStart.startsWith("["));
 
       if (isHtml && isRealHtml(rawBody)) {
-        const rewritten = rewriteHtml(rawBody, currentUrl, proxyOrigin);
+        const rewritten = await withRewriteSlot(() =>
+          rewriteHtml(rawBody, currentUrl, proxyOrigin),
+        );
         reply.type("text/html; charset=utf-8");
         reply.raw.setHeader("Content-Type", "text/html; charset=utf-8");
         // Rewriting handles normal and dynamically assigned provider URLs.
@@ -925,25 +997,33 @@ export function registerMovieRelay(
         reply.header("content-length", Buffer.byteLength(rawBody));
         reply.send(rawBody);
       } else if (isM3u8 || sniffM3u8) {
-        const rewritten = rewriteM3u8(rawBody, currentUrl);
+        const rewritten = await withRewriteSlot(() =>
+          rewriteM3u8(rawBody, currentUrl),
+        );
         reply.type("application/vnd.apple.mpegurl");
         reply.raw.setHeader("Content-Type", "application/vnd.apple.mpegurl");
         reply.header("content-length", Buffer.byteLength(rewritten));
         reply.send(rewritten);
       } else if (isJson || sniffJson) {
-        const rewritten = rewriteJson(rawBody, currentUrl);
+        const rewritten = await withRewriteSlot(() =>
+          rewriteJson(rawBody, currentUrl),
+        );
         reply.type("application/json");
         reply.raw.setHeader("Content-Type", "application/json");
         reply.header("content-length", Buffer.byteLength(rewritten));
         reply.send(rewritten);
       } else if (isCss) {
-        const rewritten = rewriteCss(rawBody, currentUrl);
+        const rewritten = await withRewriteSlot(() =>
+          rewriteCss(rawBody, currentUrl),
+        );
         reply.type("text/css; charset=utf-8");
         reply.raw.setHeader("Content-Type", "text/css; charset=utf-8");
         reply.header("content-length", Buffer.byteLength(rewritten));
         reply.send(rewritten);
       } else if (isJs) {
-        const rewritten = rewriteJsImports(rawBody, currentUrl);
+        const rewritten = await withRewriteSlot(() =>
+          rewriteJsImports(rawBody, currentUrl),
+        );
         reply.type("application/javascript; charset=utf-8");
         reply.raw.setHeader(
           "Content-Type",
