@@ -61,6 +61,12 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
     } else if (req.url === "/private") {
       res.writeHead(302, { location: "http://127.0.0.1/private" });
       res.end();
+    } else if (req.url === "/decoy-redirect") {
+      res.writeHead(302, {
+        location:
+          "https://p19-ad-site-sign-sg.tiktokcdn.com/ad-site-i18n-sg/abc.image",
+      });
+      res.end();
     } else if (req.url === "/post-303" || req.url === "/post-307") {
       res.writeHead(req.url.endsWith("303") ? 303 : 307, {
         location: "./echo",
@@ -202,6 +208,30 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
       assert.equal((await app.inject(path("/redirect"))).statusCode, 200);
       assert.ok(checked.some((url) => url.endsWith("/html")));
       assert.equal((await app.inject(path("/private"))).statusCode, 403);
+    },
+  );
+  await t.test(
+    "decoy HLS fragments are refused before any lookup or fetch",
+    async () => {
+      checked.length = 0;
+      const direct = await app.inject(
+        "/movie-proxy?url=" +
+          encodeURIComponent(
+            "https://p16-ad-site-sign-sg.tiktokcdn.com/ad-site-i18n-sg/20260702abc~tplv-d5opwmad15-ttam-origin.image",
+          ),
+      );
+      assert.equal(direct.statusCode, 403);
+      assert.match(direct.body, /decoy/i);
+      assert.deepEqual(
+        checked,
+        [],
+        "decoy hosts must not trigger a DNS lookup or upstream fetch",
+      );
+
+      // A validated redirect that lands on the decoy CDN must fail closed too.
+      const viaRedirect = await app.inject(path("/decoy-redirect"));
+      assert.equal(viaRedirect.statusCode, 403);
+      assert.match(viaRedirect.body, /decoy/i);
     },
   );
   await t.test(

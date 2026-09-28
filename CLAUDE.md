@@ -101,7 +101,7 @@ These were observed on 2026-09-03 and must be rechecked because providers change
   `8cfd2243` document that rollback; do not reintroduce that design.
 - **2026-09-28 — 2Embed boot errors fixed; upstream media blocks remain.**
   2Embed now wraps a swish/2vcdn.skin player (server 1) or a vidsrc.buzz
-  player (other servers). Four relay/client defects were fixed: (1) the
+  player (other servers). Five relay/client defects were fixed: (1) the
   JWPlayer base rewrite no longer appends a `#/jwplayer.js` fragment (JW
   derives its webpack base with `src.slice(0, src.lastIndexOf("/jwplayer.js")+1)`;
   the fragment made every chunk request hit the jwplayer.js proxy URL, so
@@ -112,7 +112,13 @@ These were observed on 2026-09-03 and must be rechecked because providers change
   origin (fixes `/player/jw8/vast.js` being fetched from aetheris.win);
   (3) the relay CSP allows `image.tmdb.org` for poster/backdrop artwork that
   players set via CSS or JS strings the URL hooks cannot see; (4) doctype
-  injection removes quirks mode on pages like 2vcdn.skin. Still blocked by
+  injection removes quirks mode on pages like 2vcdn.skin; (5) the relay now
+  refuses the TikTok ad-image "segments" of 2vcdn's decoy hls4 playlist
+  (`isDecoyAdImage` in `movie-relay.js`). Without (5) those images fetch and
+  buffer successfully through the relay, hls.js plays a black video whose
+  clock advances, and the page's hls4 → hls3 fallback never fires; with (5)
+  the fallback fires within seconds and the real signed hls3 playlist and
+  segments stream through the relay. Still blocked by
   the VPS egress (not code-fixable): `tagivi.com` Cloudflare 403,
   `unfortunatelyejectinflected.com` 403, `relay3.videm.xyz` 429 bursts,
   some signed segment URLs 404. VidSrc.to remains the default fallback.

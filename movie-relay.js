@@ -41,6 +41,26 @@ const BLOCKED_DOMAINS = new Set([
   "s10.histats.com",
 ]);
 
+// 2vcdn.skin's first (hls4) playlist is a decoy: every "segment" is a TikTok
+// ad-creative image. Through the relay those images fetch and buffer
+// "successfully", so hls.js shows a black player whose clock still advances
+// and never raises the fatal fragLoadError that the page's own hls4 → hls3
+// fallback listens for. Refusing the decoy fragments (an ad CDN, never video)
+// restores the provider's fallback; hls3 and its real segments keep going
+// through the relay like every other provider request.
+function isDecoyAdImage(raw) {
+  let url;
+  try {
+    url = raw instanceof URL ? raw : new URL(String(raw));
+  } catch {
+    return false;
+  }
+  return (
+    url.hostname.toLowerCase().endsWith(".tiktokcdn.com") &&
+    url.pathname.toLowerCase().includes("/ad-site-i18n")
+  );
+}
+
 function decodeEntities(str) {
   if (!str) return str;
   return str
@@ -578,6 +598,11 @@ export function registerMovieRelay(
 
       rawTarget = unwrapProxyUrl(rawTarget);
 
+      if (isDecoyAdImage(rawTarget)) {
+        reply.code(403).send("Blocked decoy media fragment");
+        return;
+      }
+
       const forwardedProto = req.headers["x-forwarded-proto"];
       const requestedProto = Array.isArray(forwardedProto)
         ? forwardedProto[0]
@@ -737,6 +762,8 @@ export function registerMovieRelay(
               upstreamRes.headers.location,
               currentUrl.href,
             );
+            if (isDecoyAdImage(nextUrl))
+              throw new Error("Blocked decoy media fragment");
             currentUrl = await validateUrl(nextUrl.href);
             if (
               status === 303 ||
