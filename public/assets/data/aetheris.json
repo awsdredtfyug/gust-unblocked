@@ -2949,17 +2949,6 @@
     ]
   },
   {
-    "id": "bowmasters",
-    "title": "Bowmasters",
-    "html": "assets/games/bowmasters.html",
-    "image": "assets/images/bowmasters.png",
-    "source": "aetheris",
-    "tags": [
-      "Shooting",
-      "Action"
-    ]
-  },
-  {
     "id": "epsteinbasics",
     "title": "Epsteins Basics",
     "html": "assets/games/epsteinsbasics.html",
