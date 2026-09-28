@@ -234,11 +234,12 @@
   {
     "id": "baldisbasicsbirthdaybash",
     "title": "Baldis Basics: Birthday Bash",
-    "html": "assets/games/baldisbasicsbirthdaybash.html",
-    "image": "assets/images/baldisbasicsbirthdaybash.webp",
+    "html": "assets/games/wasm-birthdaybash.html",
+    "image": "assets/images/wasm-birthdaybash.png",
     "source": "aetheris",
     "tags": [
-      "Skill"
+      "Skill",
+      "WASM"
     ]
   },
   {
@@ -274,11 +275,12 @@
   {
     "id": "beatblock",
     "title": "Beat Block",
-    "html": "assets/games/beatblock.html",
-    "image": "assets/images/beatblock.webp",
+    "html": "assets/games/wasm-beatblock.html",
+    "image": "assets/images/wasm-beatblock.jpg",
     "source": "aetheris",
     "tags": [
-      "Skill"
+      "Skill",
+      "WASM"
     ]
   },
   {
@@ -3167,11 +3169,12 @@
   {
     "id": "amongus",
     "title": "Among Us",
-    "html": "assets/games/amongus.html",
-    "image": "assets/images/amongus.png",
+    "html": "assets/games/wasm-amongus.html",
+    "image": "assets/images/wasm-amongus.webp",
     "source": "aetheris",
     "tags": [
-      "Action"
+      "Action",
+      "WASM"
     ]
   },
   {
@@ -3559,11 +3562,12 @@
   {
     "id": "helltaker",
     "title": "Helltaker",
-    "html": "assets/games/helltaker.html",
-    "image": "assets/images/thumbs/helltaker.webp",
+    "html": "assets/games/wasm-helltaker.html",
+    "image": "assets/images/wasm-helltaker.png",
     "source": "aetheris",
     "tags": [
-      "Strategy"
+      "Strategy",
+      "WASM"
     ]
   },
   {
@@ -3619,11 +3623,12 @@
   {
     "id": "agesofconflict",
     "title": "Ages of Conflict",
-    "html": "assets/games/agesofconflict.html",
-    "image": "assets/images/agesofconflict.png",
+    "html": "assets/games/wasm-aoc.html",
+    "image": "assets/images/wasm-aoc.png",
     "source": "aetheris",
     "tags": [
-      "Action"
+      "Action",
+      "WASM"
     ]
   },
   {
@@ -4734,11 +4739,12 @@
   {
     "id": "cheeserolling",
     "title": "Cheese Rolling",
-    "html": "assets/games/cheeserolling.html",
-    "image": "assets/images/cheeserolling.jpg",
+    "html": "assets/games/wasm-cheese-rolling.html",
+    "image": "assets/images/wasm-cheese-rolling.png",
     "source": "aetheris",
     "tags": [
-      "Skill"
+      "Skill",
+      "WASM"
     ]
   },
   {
@@ -5176,11 +5182,12 @@
   {
     "id": "bendyandtheinkmachine",
     "title": "Bendy and the Ink Machine",
-    "html": "assets/games/bendyandtheinkmachine.html",
-    "image": "assets/images/thumbs/bendyandtheinkmachine.webp",
+    "html": "assets/games/wasm-batim.html",
+    "image": "assets/images/wasm-batim.png",
     "source": "aetheris",
     "tags": [
-      "Skill"
+      "Skill",
+      "WASM"
     ]
   },
   {
@@ -5366,11 +5373,12 @@
   {
     "id": "stardewvalley",
     "title": "Stardew Valley",
-    "html": "assets/games/stardewvalley.html",
-    "image": "assets/images/thumbs/stardewvalley.webp",
+    "html": "assets/games/wasm-stardewvalley.html",
+    "image": "assets/images/wasm-stardewvalley.jpg",
     "source": "aetheris",
     "tags": [
-      "Skill"
+      "Skill",
+      "WASM"
     ]
   },
   {
@@ -6433,11 +6441,12 @@
   {
     "id": "diceamillion",
     "title": "Dice a Million",
-    "html": "assets/games/diceamillion.html",
-    "image": "assets/images/thumbs/diceamillion.webp",
+    "html": "assets/games/wasm-diceamillion.html",
+    "image": "assets/images/wasm-diceamillion.png",
     "source": "aetheris",
     "tags": [
-      "Skill"
+      "Skill",
+      "WASM"
     ]
   },
   {
@@ -6483,11 +6492,12 @@
   {
     "id": "cuphead",
     "title": "Cuphead",
-    "html": "assets/games/cuphead.html",
-    "image": "assets/images/cuphead.png",
+    "html": "assets/games/wasm-cuphead.html",
+    "image": "assets/images/wasm-cuphead.png",
     "source": "aetheris",
     "tags": [
-      "Action"
+      "Action",
+      "WASM"
     ]
   },
   {
@@ -8188,16 +8198,6 @@
     ]
   },
   {
-    "id": "wasm-batim",
-    "title": "Bendy and the Ink Machine",
-    "html": "assets/games/wasm-batim.html",
-    "image": "assets/images/wasm-batim.png",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
     "id": "wasm-clustertruck",
     "title": "ClusterTruck",
     "html": "assets/games/wasm-clustertruck.html",
@@ -8212,16 +8212,6 @@
     "title": "Fez",
     "html": "assets/games/wasm-fez.html",
     "image": "assets/images/wasm-fez.png",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
-    "id": "wasm-helltaker",
-    "title": "Helltaker",
-    "html": "assets/games/wasm-helltaker.html",
-    "image": "assets/images/wasm-helltaker.png",
     "source": "aetheris",
     "tags": [
       "WASM"
@@ -8258,36 +8248,6 @@
     ]
   },
   {
-    "id": "wasm-aoc",
-    "title": "Ages of Conflict",
-    "html": "assets/games/wasm-aoc.html",
-    "image": "assets/images/wasm-aoc.png",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
-    "id": "wasm-beatblock",
-    "title": "Beatblock",
-    "html": "assets/games/wasm-beatblock.html",
-    "image": "assets/images/wasm-beatblock.jpg",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
-    "id": "wasm-birthdaybash",
-    "title": "Baldi's Basics Birthday Bash",
-    "html": "assets/games/wasm-birthdaybash.html",
-    "image": "assets/images/wasm-birthdaybash.png",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
     "id": "wasm-boilnoodles",
     "title": "Boil Noodles at Night",
     "html": "assets/games/wasm-boilnoodles.html",
@@ -8302,36 +8262,6 @@
     "title": "Crashout Crew",
     "html": "assets/games/wasm-cc.html",
     "image": "assets/images/wasm-cc.jpg",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
-    "id": "wasm-cheese-rolling",
-    "title": "Cheese Rolling",
-    "html": "assets/games/wasm-cheese-rolling.html",
-    "image": "assets/images/wasm-cheese-rolling.png",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
-    "id": "wasm-cuphead",
-    "title": "Cuphead",
-    "html": "assets/games/wasm-cuphead.html",
-    "image": "assets/images/wasm-cuphead.png",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
-    "id": "wasm-diceamillion",
-    "title": "Dice A Million",
-    "html": "assets/games/wasm-diceamillion.html",
-    "image": "assets/images/wasm-diceamillion.png",
     "source": "aetheris",
     "tags": [
       "WASM"
@@ -8478,20 +8408,49 @@
     ]
   },
   {
-    "id": "wasm-stardewvalley",
-    "title": "Stardew Valley",
-    "html": "assets/games/wasm-stardewvalley.html",
-    "image": "assets/images/wasm-stardewvalley.jpg",
+    "id": "wasm-wtl",
+    "title": "While True: Learn()",
+    "html": "assets/games/wasm-wtl.html",
+    "image": "assets/images/wasm-wtl.png",
     "source": "aetheris",
     "tags": [
       "WASM"
     ]
   },
   {
-    "id": "wasm-wtl",
-    "title": "While True: Learn()",
-    "html": "assets/games/wasm-wtl.html",
-    "image": "assets/images/wasm-wtl.png",
+    "id": "wasm-amongus",
+    "title": "Among Us",
+    "html": "assets/games/wasm-amongus.html",
+    "image": "assets/images/wasm-amongus.webp",
+    "source": "aetheris",
+    "tags": [
+      "WASM"
+    ]
+  },
+  {
+    "id": "wasm-bpac",
+    "title": "Brotato Paws n' Claws",
+    "html": "assets/games/wasm-bpac.html",
+    "image": "assets/images/wasm-bpac.png",
+    "source": "aetheris",
+    "tags": [
+      "WASM"
+    ]
+  },
+  {
+    "id": "wasm-patho",
+    "title": "Pathogenic",
+    "html": "assets/games/wasm-patho.html",
+    "source": "aetheris",
+    "tags": [
+      "WASM"
+    ]
+  },
+  {
+    "id": "wasm-azahar",
+    "title": "Azahar",
+    "html": "assets/games/wasm-azahar.html",
+    "image": "assets/images/wasm-azahar.png",
     "source": "aetheris",
     "tags": [
       "WASM"
