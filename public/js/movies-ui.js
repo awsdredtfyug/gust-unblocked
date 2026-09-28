@@ -440,10 +440,11 @@
       option.textContent = provider.name;
       source.appendChild(option);
     });
-    // 2Embed's current media hosts reject the VPS egress. Migrate sessions
-    // that predate the proxy-only default so iPads do not remain pinned to a
-    // provider that can load its UI but cannot deliver video segments.
-    var sourceDefaultVersion = "proxy-only-20260908";
+    // 2Embed is the default provider: its swish/2vcdn path plays end to end
+    // through the relay since the decoy-fragment fix, and its per-title
+    // server menu (2embed/Vsrc/Videm/Vcr) gives more fallbacks than a
+    // single-chain source. VidSrc.to stays selectable as a fallback.
+    var sourceDefaultVersion = "2embed-default-20260928";
     var savedVersion = Aetheris.storage.getItem("movieSourceVersion");
     var saved = Number(Aetheris.storage.getItem("movieSourceIdx"));
     source.value =
@@ -452,7 +453,7 @@
       Number.isInteger(saved) &&
       MOVIES_SOURCES[saved]
         ? String(saved)
-        : "3";
+        : "1";
     Aetheris.storage.setItem("movieSourceVersion", sourceDefaultVersion);
     Aetheris.storage.setItem("movieSourceIdx", source.value);
     source.disabled = type === "tv";

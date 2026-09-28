@@ -87,16 +87,15 @@ These were observed on 2026-09-03 and must be rechecked because providers change
   regardless of Referer/Origin/UA (verified 2026-09-08 via full curl replay
   of the signed chain from the VPS; no cookies involved anywhere). Same
   upstream-block category as `streamingnow.mov`/`vidsrcme.ru`. 2Embed stays
-  proxied per user preference, but all three of its servers fail through
-  the VPS (verified 2026-09-08: Videm segments `403` on VNE — IPv4-only,
-  no IPv6 route — and `Expired` on VEM-4 with an `x` timestamp ~6 days
-  stale at issue; Cnby's `cineby.hair` is `404` dead; Vcr's `vidcore`
-  answers Cloudflare "blocked" to the VPS IP), while the residential
-  browser passes the ones that are alive. VidSrc.to is the default working
-  source. If a 2Embed server recovers VPS access, no code change is needed.
-  Recheck, providers change. Because all three were still failing, the
-  proxy-only VidSrc.to source replaced 2Embed as the default on 2026-09-08;
-  2Embed remains selectable for recovery checks.
+  proxied per user preference. Titles whose 2Embed servers all funnel to a
+  blocked host still fail (verified 2026-09-28: UNABOMBER tmdb=1492640 has no
+  swish server — vidsrc.buzz/Videm-direct both hit `relay3.videm.xyz` 429s,
+  Vcr is dead, and VidSrc.to's new `filamentoffable.space` CDN 403/429/401s);
+  for those, switch the source dropdown or retry later. Because the swish
+  path was verified playing real video through the relay, 2Embed replaced
+  VidSrc.to as the default on 2026-09-28; VidSrc.to remains as fallback.
+  If a 2Embed server recovers VPS access, no code change is needed.
+  Recheck, providers change.
 - A prior attempted movie fix was fully reverted. Commits `3cf60bbe` through
   `8cfd2243` document that rollback; do not reintroduce that design.
 - **2026-09-28 — 2Embed boot errors fixed; upstream media blocks remain.**

@@ -19,13 +19,15 @@ var MOVIES_SOURCES = [
   },
   {
     // NOTE (2026-09-28): 2Embed's first server wraps a swish/2vcdn.skin
-    // player and the others a vidsrc.buzz player; both boot through the
-    // relay now that the JWPlayer base rewrite works (previous fragment
-    // broke chunk loading). Individual titles can still fail when a media
-    // CDN rejects the VPS egress (tagivi.com and unfortunatelyejectinflected
-    // answer 403 to the datacenter IP, relay3.videm.xyz rate-limits with
-    // 429), so keep VidSrc.to as the reliable fallback. Kept proxied per
-    // user preference.
+    // player and the others a vidsrc.buzz player; the swish path plays end
+    // to end through the relay (the relay refuses the decoy hls4 ad-image
+    // fragments, so the player's own hls4 → hls3 fallback fires and the real
+    // signed hls3 segments stream proxied). Individual titles can still fail
+    // when every 2Embed server for that title funnels to a host that rejects
+    // the VPS egress (tagivi.com and unfortunatelyejectinflected answer 403
+    // to the datacenter IP, relay3.videm.xyz rate-limits with 429), so keep
+    // VidSrc.to as the fallback. Default source. Kept proxied per user
+    // preference.
     name: "2Embed (2embed.cc)",
     url: function (t, id, s, e) {
       // 2Embed's TV endpoint expects its parameters after a
