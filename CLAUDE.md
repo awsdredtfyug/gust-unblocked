@@ -106,7 +106,11 @@ These were observed on 2026-09-03 and must be rechecked because providers change
   502s; `vidsrc.sh` wraps the same challenged `cloudorchestranova` chain
   (`sartorialsupernova.space` 403/429/401); `embos.top` resolves no stream;
   `ployan.me` needs opaque per-session tokens (unusable directly);
-  123moviesfree's own player JS 404s on their server. Nothing to add.
+  123moviesfree's own player JS 404s on their server; `cineby.at` DNS-dead
+  and `cineby.ws` 404s all watch paths; `vidking.net` DNS-dead;
+  `player.videasy.to` flaps 403 to non-browser clients (curl 200, headless
+  Chromium always 403, relay flaky) — front door too unreliable to add.
+  Nothing to add.
 - A prior attempted movie fix was fully reverted. Commits `3cf60bbe` through
   `8cfd2243` document that rollback; do not reintroduce that design.
 - **2026-09-28 — 2Embed boot errors fixed; upstream media blocks remain.**
