@@ -63,20 +63,10 @@ var MOVIES_SOURCES = [
       return "/movie-proxy?url=" + encodeURIComponent(upstream);
     },
   },
-  {
-    // Resolved HLS via the hls.lol content API (verified 2026-09-29 from
-    // the VPS: API + playlist + segments 200 through the relay for movies
-    // and tv s/e). Plays through the local hls-player page so every byte
-    // stays proxied; appended last so existing source indexes never shift.
-    name: "HLS (hls.lol)",
-    url: function (t, id, s, e) {
-      return (
-        "/hls-player.html?type=" +
-        t +
-        "&id=" +
-        id +
-        (t === "tv" ? "&s=" + s + "&e=" + e : "")
-      );
-    },
-  },
+  // NOTE (2026-09-29): an "HLS (hls.lol)" entry lived here. Removed from
+  // the dropdown because the media host serves an "atlantic.st disable
+  // VPN" slate to datacenter egress instead of the title (verified by
+  // screenshot — frame counts alone don't prove content). The /hls-resolve
+  // route + hls-player page stay in place and tested; re-adding is one
+  // entry if egress reputation ever changes.
 ];
