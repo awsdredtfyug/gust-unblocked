@@ -8418,16 +8418,6 @@
     ]
   },
   {
-    "id": "wasm-amongus",
-    "title": "Among Us",
-    "html": "assets/games/wasm-amongus.html",
-    "image": "assets/images/wasm-amongus.webp",
-    "source": "aetheris",
-    "tags": [
-      "WASM"
-    ]
-  },
-  {
     "id": "wasm-bpac",
     "title": "Brotato Paws n' Claws",
     "html": "assets/games/wasm-bpac.html",
