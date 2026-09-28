@@ -79,6 +79,13 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
           url: `http://relay-fixture.test:${port}/pl.m3u8`,
         }),
       );
+    } else if (req.url === "/lul/movie/7") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          stream: `http://relay-fixture.test:${port}/pl.m3u8`,
+        }),
+      );
     } else if (req.url === "/content/movie/404") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ found: false }));
@@ -128,6 +135,7 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
       return { url, addresses: [{ address: "127.0.0.1", family: 4 }] };
     },
     hlsApiBase: `http://relay-fixture.test:${port}`,
+    lulApiBase: `http://relay-fixture.test:${port}/lul`,
   });
   await app.ready();
   t.after(async () => {
@@ -278,6 +286,14 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
       out.includes(`referer=${encodeURIComponent("https://cinecat.eu/")}`),
     );
     assert.ok(!out.includes("referer=https%3A%2F%2Ftotallyacdn.org"));
+    // tnmr.org media (P-Stream lul backend) needs its own embed referer
+    const tnmr = rewriteM3u8(
+      "#EXTM3U\nhttps://abc123.tnmr.org/hls2/seg1.ts\n",
+      new URL("https://abc123.tnmr.org/hls2/master.m3u8"),
+    );
+    assert.ok(
+      tnmr.includes(`referer=${encodeURIComponent("https://aether.ist/")}`),
+    );
     // ordinary hosts keep the playlist URL as referer
     const plain = rewriteM3u8("#EXTM3U\nseg.ts\n", {
       href: "https://example.net/a/index.m3u8",
@@ -346,6 +362,19 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
       (await app.inject("/hls-resolve?type=movie&id=9")).statusCode,
       502,
       "an HTML bounce page is never served as a playlist",
+    );
+    const lul = await app.inject("/hls-resolve?via=lul&type=movie&id=7");
+    assert.equal(lul.statusCode, 200);
+    assert.ok(
+      lul.body.includes(
+        `/movie-proxy?url=${encodeURIComponent(`http://relay-fixture.test:${port}/seg1.ts`)}`,
+      ),
+      "the lul {stream} shape resolves the same way",
+    );
+    assert.equal(
+      (await app.inject("/hls-resolve?via=nope&type=movie&id=7")).statusCode,
+      400,
+      "unknown resolvers are rejected",
     );
   });
   await t.test(

@@ -85,6 +85,7 @@
         }
         var q = new URLSearchParams(location.search);
         var type = q.get("type") === "tv" ? "tv" : "movie";
+        var via = q.get("via") === "lul" ? "lul" : "hls";
         var id = q.get("id") || "";
         var s = q.get("s") || "1";
         var e = q.get("e") || "1";
@@ -93,13 +94,13 @@
           return;
         }
         var src =
-          "/hls-resolve?type=" +
+          "/hls-resolve?via=" +
+          via +
+          "&type=" +
           type +
           "&id=" +
           id +
-          (type === "tv"
-            ? "&s=" + encodeURIComponent(s) + "&e=" + encodeURIComponent(e)
-            : "");
+          (type === "tv" ? "&s=" + encodeURIComponent(s) + "&e=" + encodeURIComponent(e) : "");
         function started() {
           say("");
           playbtn.classList.remove("show");

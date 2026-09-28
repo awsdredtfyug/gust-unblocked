@@ -390,6 +390,10 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
 // embed-site referer returns video (verified 2026-09-29 from the VPS
 // egress: self-referer 302s, cinecat.eu referer 200s, light volume).
 const TOTALLYACDN_REFERER = "https://cinecat.eu/";
+// The P-Stream lul backend mints worker URLs that 302 to signed tnmr.org
+// masters; those media hosts serve the VPS fine as long as the request
+// carries an embed-site referer (verified 2026-09-29).
+const TNM_RORG_REFERER = "https://aether.ist/";
 
 function playlistReferer(targetUrl, override) {
   if (override) return override;
@@ -397,6 +401,7 @@ function playlistReferer(targetUrl, override) {
     const host = new URL(unwrapProxyUrl(targetUrl.href)).hostname.toLowerCase();
     if (host === "totallyacdn.org" || host.endsWith(".totallyacdn.org"))
       return TOTALLYACDN_REFERER;
+    if (host.endsWith(".tnmr.org")) return TNM_RORG_REFERER;
   } catch {
     /* fall through to the playlist URL */
   }
@@ -591,7 +596,11 @@ function rewriteJson(jsonText, targetUrl) {
 
 export function registerMovieRelay(
   server,
-  { resolveTarget = resolvePublicUrl, hlsApiBase = "https://cdn.hls.lol" } = {},
+  {
+    resolveTarget = resolvePublicUrl,
+    hlsApiBase = "https://cdn.hls.lol",
+    lulApiBase = "https://lul.aether.cx",
+  } = {},
 ) {
   // A trusted server-side dependency override supports isolated fixture tests.
   // No request parameter can bypass the default public-network validator.
@@ -1222,24 +1231,47 @@ export function registerMovieRelay(
     });
 
     // Resolved HLS for the hls-player page: maps a TMDB id to a signed
-    // playlist through the hls.lol content API, then serves the playlist
-    // with every entry rewritten back through /movie-proxy. The playlist
-    // host (totallyacdn.org) gets the embed referer it requires via the
-    // rewriteM3u8 rule; without it, segments 302 to an unrelated page.
+    // playlist through a JSON resolver API, then serves the playlist with
+    // every entry rewritten back through /movie-proxy. Supported resolvers
+    // (?via=): "hls" (hls.lol content API, {found,url} shape) and "lul"
+    // (P-Stream lul backend, {stream} shape, worker URL 302s to the signed
+    // master — followed with validation). Media hosts that gate on
+    // referer get the embed referer they require via the rewriteM3u8
+    // rule; without it, segments bounce to an unrelated page.
     // TMDB ids are digits only and season/episode are small ints, so no
     // request parameter can steer the API URL anywhere unintended — and
     // both the API and playlist responses still pass SSRF validation.
     fastify.get("/hls-resolve", async (req, reply) => {
       const type = req.query.type;
       const id = req.query.id;
+      const via = req.query.via || "hls";
       if (
         (type !== "movie" && type !== "tv") ||
         typeof id !== "string" ||
-        !/^\d{1,10}$/.test(id)
+        !/^\d{1,10}$/.test(id) ||
+        (via !== "hls" && via !== "lul")
       ) {
-        return reply.code(400).send("Invalid type or id parameter");
+        return reply.code(400).send("Invalid type, id or via parameter");
       }
-      let apiPath = `/content/${type}/${id}`;
+      let apiPath;
+      let pickUrl;
+      if (via === "lul") {
+        // lul paths mirror the TMDB route shape: /movie/{id},
+        // /tv/{id}/{s}/{e} (s/e appended below for tv)
+        apiPath = type === "movie" ? `/movie/${id}` : `/tv/${id}`;
+        pickUrl = (payload) =>
+          payload && typeof payload.stream === "string"
+            ? payload.stream
+            : null;
+      } else {
+        apiPath = `/content/${type}/${id}`;
+        pickUrl = (payload) =>
+          payload &&
+          payload.found === true &&
+          typeof payload.url === "string"
+            ? payload.url
+            : null;
+      }
       if (type === "tv") {
         const s = Number(req.query.s);
         const e = Number(req.query.e);
@@ -1255,9 +1287,10 @@ export function registerMovieRelay(
         }
         apiPath += `/${s}/${e}`;
       }
+      const apiBase = via === "lul" ? lulApiBase : hlsApiBase;
       let apiUrl;
       try {
-        apiUrl = await validateUrl(`${hlsApiBase}${apiPath}`);
+        apiUrl = await validateUrl(`${apiBase}${apiPath}`);
       } catch (err) {
         return reply.code(403).send(`SSRF validation failed: ${err.message}`);
       }
@@ -1268,14 +1301,12 @@ export function registerMovieRelay(
         });
         if (apiRes.status !== 200)
           throw new Error(`API answered ${apiRes.status}`);
-        const payload = JSON.parse(apiRes.body.toString("utf-8"));
-        if (
-          !payload ||
-          payload.found !== true ||
-          typeof payload.url !== "string"
-        )
+        const playlistUrl = pickUrl(
+          JSON.parse(apiRes.body.toString("utf-8")),
+        );
+        if (!playlistUrl)
           return reply.code(404).send("No stream found for this title");
-        playlistHref = payload.url;
+        playlistHref = playlistUrl;
       } catch (err) {
         return reply.code(502).send(`Stream lookup failed: ${err.message}`);
       }

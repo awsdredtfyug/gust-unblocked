@@ -69,4 +69,20 @@ var MOVIES_SOURCES = [
   // screenshot — frame counts alone don't prove content). The /hls-resolve
   // route + hls-player page stay in place and tested; re-adding is one
   // entry if egress reputation ever changes.
+  {
+    // P-Stream lul backend (verified 2026-09-29 from the VPS: lookup API
+    // + worker-signed master + child + segments all 200 through the
+    // relay). Plays through the local hls-player page so every byte stays
+    // proxied; appended last so existing source indexes never shift.
+    name: "Aether (lul)",
+    url: function (t, id, s, e) {
+      return (
+        "/hls-player.html?via=lul&type=" +
+        t +
+        "&id=" +
+        id +
+        (t === "tv" ? "&s=" + s + "&e=" + e : "")
+      );
+    },
+  },
 ];
