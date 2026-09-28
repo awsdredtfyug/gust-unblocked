@@ -99,6 +99,36 @@ test("favorites tolerate malformed storage and normalize numeric IDs", () => {
   assert.equal(site.storage.getItem("value"), null);
 });
 
+test("remote images route through the same-origin relay", () => {
+  const site = helpers();
+  const remote = "https://truffled.lol/png/games/1.webp";
+  assert.equal(site.imageUrl(remote), "/img?url=" + encodeURIComponent(remote));
+  assert.equal(
+    site.imageUrl("//cdn.example/cover.png"),
+    "/img?url=" + encodeURIComponent("https://cdn.example/cover.png"),
+  );
+  assert.equal(
+    site.imageUrl("/assets/ui/placeholder.svg"),
+    "https://aetheris.test/assets/ui/placeholder.svg",
+  );
+  assert.equal(
+    site.imageUrl("data:image/png;base64,AAAA"),
+    "data:image/png;base64,AAAA",
+  );
+  // values the relay cannot use are passed through unchanged (img ignores them)
+  assert.equal(site.imageUrl("javascript:alert(1)"), "javascript:alert(1)");
+  assert.equal(site.imageUrl(""), "");
+  assert.equal(site.imageUrl(undefined), undefined);
+});
+
+test("player accepts iframe-only catalog entries (igroutka)", () => {
+  const source = fs.readFileSync(
+    new URL("../public/js/load.js", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /item\.url \|\| item\.html \|\| item\.iframe/);
+});
+
 test("navigation fallback is absolute and modified clicks are left to the browser", () => {
   const listeners = {};
   const location = {

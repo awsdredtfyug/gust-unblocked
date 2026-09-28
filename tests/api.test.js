@@ -311,6 +311,27 @@ test("a malformed WebSocket upstream cannot crash the server", async () => {
   assert.equal((await api("/online-count")).status, 200);
 });
 
+test("image relay rejects missing and non-public targets", async () => {
+  let res = await fetch(base + "/img");
+  assert.equal(res.status, 400);
+
+  res = await fetch(
+    base + "/img?url=" + encodeURIComponent("http://127.0.0.1/cover.png"),
+  );
+  assert.equal(res.status, 403);
+
+  res = await fetch(
+    base + "/img?url=" + encodeURIComponent("file:///etc/passwd"),
+  );
+  assert.equal(res.status, 403);
+
+  res = await fetch(base + "/img?url=" + "x".repeat(9000));
+  assert.equal(res.status, 400);
+
+  // the server stays healthy after the rejected requests
+  assert.equal((await api("/online-count")).status, 200);
+});
+
 test("lc-relay rejects cross-origin upgrades and accepts same-origin hosts", async () => {
   const wsBase = base.replace("http:", "ws:");
   await new Promise((resolve, reject) => {

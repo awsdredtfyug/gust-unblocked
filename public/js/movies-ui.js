@@ -112,10 +112,12 @@
       image.alt = "";
       image.loading = "lazy";
       image.decoding = "async";
-      image.src =
-        typeof item.poster_path === "string" && item.poster_path.startsWith("/")
+      image.src = Aetheris.imageUrl(
+        typeof item.poster_path === "string" &&
+          item.poster_path.startsWith("/")
           ? TMDB_IMG + item.poster_path
-          : Aetheris.placeholder;
+          : Aetheris.placeholder,
+      );
       image.onerror = function () {
         image.onerror = null;
         image.src = Aetheris.placeholder;

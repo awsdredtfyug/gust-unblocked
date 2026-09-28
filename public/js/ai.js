@@ -824,9 +824,11 @@
         )
           ? image.mime_type
           : "image/png";
-        element.src = image.b64_json
-          ? "data:" + mime + ";base64," + image.b64_json
-          : image.url;
+        element.src = Aetheris.imageUrl(
+          image.b64_json
+            ? "data:" + mime + ";base64," + image.b64_json
+            : image.url,
+        );
         element.alt = prompt;
         element.referrerPolicy = "no-referrer";
         var caption = document.createElement("div");

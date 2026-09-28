@@ -27,6 +27,7 @@ import { lcRelayUpgrade } from "./lc-relay.js";
 import { registerMovieRelay } from "./movie-relay.js";
 import { createRateLimiter } from "./lib/rate-limit.js";
 import { downloadPublicImage, resolvePublicUrl } from "./lib/public-network.js";
+import { registerImageProxy } from "./lib/image-proxy.js";
 import { uniqueOnlineCount } from "./lib/online.js";
 
 // Load local development configuration before any feature reads process.env.
@@ -593,6 +594,7 @@ const fastify = Fastify({
 });
 
 registerMovieRelay(fastify);
+registerImageProxy(fastify);
 
 const consumeRate = createRateLimiter();
 fastify.addHook("onRequest", async (req, reply) => {
@@ -602,6 +604,7 @@ fastify.addHook("onRequest", async (req, reply) => {
   // too, not just the POST APIs
   const isModels = req.method === "GET" && path === "/api/ai/models";
   const isTmdb = req.method === "GET" && path.startsWith("/api/tmdb/");
+  const isImg = req.method === "GET" && path === "/img";
   const isRelay =
     req.method !== "OPTIONS" &&
     (path === "/movie-proxy" ||
@@ -609,7 +612,8 @@ fastify.addHook("onRequest", async (req, reply) => {
       // subtitle compatibility route calls the same proxy handler; keep it
       // under the same cap or it becomes an unmetered relay bypass
       path === "/api.php");
-  if (req.method !== "POST" && !isModels && !isTmdb && !isRelay) return;
+  if (req.method !== "POST" && !isModels && !isTmdb && !isRelay && !isImg)
+    return;
   let limit = 0,
     windowMs = 60000,
     group = path;
@@ -619,6 +623,11 @@ fastify.addHook("onRequest", async (req, reply) => {
     // sits well above that but still stops bulk laundering/scraping
     limit = 600;
     group = "movie-proxy";
+  } else if (isImg) {
+    // covers are browser-cached and LRU-cached server-side; this only bounds
+    // bulk scraping. A classroom cold-loading a full library stays well under.
+    limit = 6000;
+    group = "img-proxy";
   } else if (isTmdb) {
     limit = 120;
     group = "tmdb";

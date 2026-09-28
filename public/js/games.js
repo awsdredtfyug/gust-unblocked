@@ -96,7 +96,9 @@
     img.decoding = "async";
     img.referrerPolicy = "no-referrer";
     img.alt = title;
-    img.src = game.image || game.img || Aetheris.placeholder;
+    img.src = Aetheris.imageUrl(
+      game.image || game.img || Aetheris.placeholder,
+    );
     img.onerror = function () {
       img.onerror = null;
       img.src = Aetheris.placeholder;

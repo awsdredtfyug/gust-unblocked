@@ -94,7 +94,7 @@
     // <img> can display cross-origin images without CORS. Fetching them as
     // no-cors yielded an unreadable empty Blob and broke otherwise valid icons.
     img.referrerPolicy = "no-referrer";
-    img.src = src;
+    img.src = Aetheris.imageUrl(src);
     img.onerror = (function (imgref) {
       return function () {
         if (imgref.dataset.fallbackApplied === "true") return;

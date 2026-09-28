@@ -115,6 +115,19 @@
     }
   }
 
+  // Remote images (game covers, movie posters, ...) go through the same-origin
+  // /img relay so they still load when a school filter blocks the source host.
+  // Same-origin paths, data: and blob: URLs pass through untouched.
+  function imageUrl(value) {
+    if (typeof value !== "string" || !value.trim()) return value;
+    var trimmed = value.trim();
+    if (/^(data:|blob:)/i.test(trimmed)) return trimmed;
+    var absolute = httpUrl(trimmed);
+    if (!absolute) return value;
+    if (absolute.indexOf(location.origin + "/") === 0) return absolute;
+    return "/img?url=" + encodeURIComponent(absolute);
+  }
+
   var pages = {
     home: "home.html",
     games: "maths.html",
@@ -260,6 +273,7 @@
     readList: readList,
     getToken: getToken,
     httpUrl: httpUrl,
+    imageUrl: imageUrl,
     parseRoute: parseRoute,
     routeForUrl: routeForUrl,
     fullscreen: fullscreen,

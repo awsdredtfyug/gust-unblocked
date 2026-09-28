@@ -107,6 +107,27 @@ Local smoke test: server boots, `GET /foo/bar` returns the 404 page,
 `/api.php` rejects invalid refs, `/movie-proxy` still blocks private targets
 and relays `example.com` with the expected CSP.
 
+### Follow-up (same day): source-blocked cover images
+
+Game cards, app icons and movie posters loaded directly from third-party hosts,
+so a school DNS filter on `truffled.lol` / `igroutka.ru` / `velara.my` /
+`cdn.jsdelivr.net` left every card on a placeholder. Remote images now go
+through a same-origin `/img?url=` relay (`lib/image-proxy.js`) that reuses the
+SSRF-hardened fetch in `lib/public-network.js`, validates redirects and
+addresses, caps size/type (png/jpeg/webp/gif/avif), keeps a small in-memory
+LRU, and serves long-lived browser-cacheable responses. `Aetheris.imageUrl()`
+wires every card/poster renderer (`games.js`, `apps.js`, `load.js`,
+`movies-ui.js`, `ai.js`) to it. The `truffled.json` catalog was also refreshed
+from `https://truffled.lol/js/json/g.json` (604 games), and `petezah.json` was
+re-pointed at PeteZah's live catalog
+(`https://petezahgames.com/storage/data/collection.json`, 1209 games; the
+captcha-gated `/iframe.html` wrappers are resolved to direct game URLs, and
+three malformed cover URLs were repaired).
+
+PeteZah's own catalog ships 23 dead game URLs and 82 dead covers (mostly the
+`storage/ag/echo/*` collection, which 404s on their server). They are kept for
+parity and will start working if PeteZah restores the files.
+
 ## Recommended, not changed
 
 Ordered by value; each needs a product decision or live validation before

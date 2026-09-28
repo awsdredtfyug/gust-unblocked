@@ -155,7 +155,9 @@
         imgel.onerror = null;
         imgel.src = Aetheris.placeholder;
       };
-      imgel.src = item.image || item.img || Aetheris.placeholder;
+      imgel.src = Aetheris.imageUrl(
+        item.image || item.img || Aetheris.placeholder,
+      );
     }
   }
 
@@ -184,14 +186,16 @@
 
   async function loaditem(item) {
     var container = document.getElementById("game-frame");
-    var url = Aetheris.httpUrl(item.url || item.html || "");
+    // igroutka ships some entries with only an "iframe" URL (their own game
+    // page wrapper) and a null "url"; without the fallback those cards cannot
+    // launch at all.
+    var url = Aetheris.httpUrl(item.url || item.html || item.iframe || "");
 
     if (!container) {
       console.error("no #game-frame found");
       return;
     }
-    if (!url || (!item.url && !item.html))
-      throw new Error("This item does not have a valid game/app URL.");
+    if (!url) throw new Error("This item does not have a valid game/app URL.");
 
     setgameinfo(item);
 
