@@ -152,6 +152,10 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
     ) {
       return match;
     }
+    // Non-HTTP schemes (mailto:, tel:, ...) can't be relayed. Proxying them
+    // used to turn every footer link into a 403 "SSRF validation failed".
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(decoded);
+    if (scheme && !/^https?$/i.test(scheme[1])) return match;
 
     try {
       const abs = new URL(decoded, href).href;
@@ -857,7 +861,7 @@ export function registerMovieRelay(
         // those hooks, it may contact only this relay origin, never upstream.
         reply.header(
           "Content-Security-Policy",
-          "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; frame-src 'self' blob:; worker-src 'self' blob:; form-action 'self'; base-uri https:",
+          "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob:; img-src 'self' data: blob: https://flagcdn.com; media-src 'self' data: blob:; font-src 'self' data:; frame-src 'self' blob:; worker-src 'self' blob:; form-action 'self'; base-uri https:",
         );
         reply.header("content-length", Buffer.byteLength(rewritten));
         reply.send(rewritten);
@@ -869,7 +873,7 @@ export function registerMovieRelay(
         reply.raw.setHeader("Content-Type", "text/html; charset=utf-8");
         reply.header(
           "Content-Security-Policy",
-          "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; frame-src 'self' blob:; worker-src 'self' blob:; form-action 'self'; base-uri https:",
+          "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob:; img-src 'self' data: blob: https://flagcdn.com; media-src 'self' data: blob:; font-src 'self' data:; frame-src 'self' blob:; worker-src 'self' blob:; form-action 'self'; base-uri https:",
         );
         reply.header("content-length", Buffer.byteLength(rawBody));
         reply.send(rawBody);

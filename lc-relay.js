@@ -40,6 +40,33 @@ const OpKick = 7;
 const OpPing = 8;
 const OpPong = 9;
 
+// Caddy terminates TLS and proxies from loopback, so socket.remoteAddress is
+// always 127.0.0.1 in production. The rightmost X-Forwarded-For entry is the
+// address Caddy appended (the real peer); earlier entries are client-supplied
+// and spoofable.
+function clientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  const value = Array.isArray(forwarded)
+    ? forwarded[forwarded.length - 1]
+    : forwarded;
+  if (typeof value === "string" && value) {
+    const parts = value.split(",");
+    const last = parts[parts.length - 1].trim();
+    if (last) return last;
+  }
+  return req.socket.remoteAddress || "unknown";
+}
+
+// Room codes and client versions are arbitrary client bytes; strip control
+// characters before they reach `pm2 logs` and cap the length so a crafted
+// frame can't forge log lines or write megabytes per connection.
+function clean(value, max = 80) {
+  return String(value ?? "?")
+    // eslint-disable-next-line no-control-regex -- stripping control characters is the entire point
+    .replace(/[\r\n\t\x00-\x1f]+/g, " ")
+    .slice(0, max);
+}
+
 /** @type {Map<string, Room>} */
 const rooms = new Map();
 const roomsPerIp = new Map(); // host remote address -> rooms currently open
@@ -162,7 +189,7 @@ function handleMemberLeave(ws) {
       dropClient(member, "host_left");
     }
     room.members.clear();
-    console.log(`[lc-relay] room ${room.code} closed (host left)`);
+    console.log(`[lc-relay] room ${clean(room.code)} closed (host left)`);
     return;
   }
 
@@ -170,7 +197,7 @@ function handleMemberLeave(ws) {
   if (id != null && room.members.delete(id)) {
     sendPeerLeave(room.host, id);
     console.log(
-      `[lc-relay] room ${room.code}: member ${id} left (${room.memberCount()} member(s) remaining)`,
+      `[lc-relay] room ${clean(room.code)}: member ${id} left (${room.memberCount()} member(s) remaining)`,
     );
   }
 }
@@ -214,7 +241,7 @@ function handleFrame(ws, frame) {
         dropClient(target, "Kicked by the host.");
         sendPeerLeave(room.host, targetId);
         console.log(
-          `[lc-relay] room ${room.code}: member ${targetId} kicked by host`,
+          `[lc-relay] room ${clean(room.code)}: member ${targetId} kicked by host`,
         );
       }
       break;
@@ -245,7 +272,11 @@ function handleJoin(ws, frame) {
     (role !== 0 && role !== 1) ||
     roomLen === 0 ||
     roomLen > 64 ||
-    4 + roomLen + verLen !== frame.length
+    verLen > 64 ||
+    4 + roomLen + verLen !== frame.length ||
+    // printable codes only — anything else is a crafted frame
+    // eslint-disable-next-line no-control-regex -- rejecting control characters is the entire point
+    /[\x00-\x1f\x7f]/.test(code)
   ) {
     sendError(ws, "bad_join_frame");
     dropClient(ws, "bad_join_frame");
@@ -282,7 +313,9 @@ function handleJoin(ws, frame) {
     ws.room = room;
     ws.wireId = 0;
     sendJoined(ws, 0);
-    console.log(`[lc-relay] room ${code} created (host, version ${version})`);
+    console.log(
+      `[lc-relay] room ${clean(code)} created (host, version ${clean(version, 32)})`,
+    );
   } else {
     // Client: join an existing room.
     const room = rooms.get(code);
@@ -306,7 +339,7 @@ function handleJoin(ws, frame) {
     sendJoined(ws, id);
     sendPeerJoin(room.host, id);
     console.log(
-      `[lc-relay] room ${code}: member ${id} joined (${room.memberCount()} in room)`,
+      `[lc-relay] room ${clean(code)}: member ${id} joined (${room.memberCount()} in room)`,
     );
   }
 }
@@ -316,6 +349,25 @@ function handleJoin(ws, frame) {
  * Same semantics as wss://<origin>/lc-relay on the standalone relay.
  */
 function lcRelayUpgrade(req, socket, head) {
+  // WebSockets are not subject to CORS, so without an Origin check any
+  // website could open rooms on this relay or brute-force join codes from a
+  // visitor's browser. Compare the Origin host to the Host header (works for
+  // any deployment, including forks and localhost); non-browser clients that
+  // send no Origin are allowed through.
+  const origin = req.headers.origin;
+  if (typeof origin === "string" && origin) {
+    let originHost;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      return;
+    }
+    if (req.headers.host && originHost !== req.headers.host) {
+      socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      return;
+    }
+  }
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
   });
@@ -330,7 +382,7 @@ wss.on("connection", (ws, req) => {
   let lastSeen = Date.now();
   ws.room = null;
   ws.wireId = null;
-  ws.remoteAddress = req.socket.remoteAddress;
+  ws.remoteAddress = clientIp(req);
 
   ws.on("message", (data) => {
     lastSeen = Date.now();
@@ -350,16 +402,14 @@ wss.on("connection", (ws, req) => {
   // Heartbeat: drop sockets that stop talking (flaky school connections die silently).
   const hb = setInterval(() => {
     if (Date.now() - lastSeen > IDLE_TIMEOUT_MS) {
-      console.log(
-        `[lc-relay] dropping idle connection (${req.socket.remoteAddress})`,
-      );
+      console.log(`[lc-relay] dropping idle connection (${clientIp(req)})`);
       ws.terminate();
       clearInterval(hb);
     }
   }, 15 * 1000);
   ws.on("close", () => clearInterval(hb));
 
-  console.log(`[lc-relay] connection from ${req.socket.remoteAddress}`);
+  console.log(`[lc-relay] connection from ${clientIp(req)}`);
 });
 
 export { lcRelayUpgrade };

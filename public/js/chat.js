@@ -97,7 +97,7 @@ async function logout() {
   } catch (_) {}
   cleartoken();
   myusername = "";
-  localStorage.removeItem("dmUsername");
+  Aetheris.storage.removeItem("dmUsername");
   showauth();
 }
 

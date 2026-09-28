@@ -22,6 +22,9 @@
   var maxAttachments = 3;
   var maxImageAttachments = 4;
   var maxFileBytes = 4 * 1024 * 1024;
+  // Bumped by clearChat so an in-flight FileReader can't repopulate
+  // attachments after the conversation has been reset.
+  var attachmentEpoch = 0;
 
   var app = $("ai-app");
   var msgsEl = $("ai-msgs");
@@ -218,6 +221,7 @@
         "ai-model-option" + (model.id === selected ? " selected" : "");
       option.setAttribute("data-model-value", model.id);
       option.setAttribute("data-model-kind", kind);
+      option.setAttribute("aria-pressed", String(model.id === selected));
       option.appendChild(makeProviderIcon(model));
       option.appendChild(makeModelCopy(model));
       var check = document.createElement("span");
@@ -286,8 +290,14 @@
 
   function loadModels() {
     applyModels([{ id: defaultModel }, { id: defaultImgModel }]);
-    fetch("/api/ai/models")
+    // Models are behind the same bearer gate as chat/images when
+    // AI_REQUIRE_LOGIN=true — send the token like the other calls do.
+    fetch("/api/ai/models", { headers: apiHeaders() })
       .then(function (response) {
+        if (!response.ok)
+          throw new Error(
+            "Could not load AI models (" + response.status + ").",
+          );
         return response.json();
       })
       .then(function (data) {
@@ -299,7 +309,7 @@
         applyModels(data.data || []);
       })
       .catch(function (error) {
-        setErr(error.message);
+        setErr(error.message, "chat");
       });
   }
 
@@ -483,8 +493,9 @@
       }
     }
     try {
+      var epoch = attachmentEpoch;
       var loaded = await Promise.all(incoming.map(readFile));
-      if (busying) return;
+      if (busying || epoch !== attachmentEpoch) return;
       attachments = attachments.concat(loaded).slice(0, maxAttachments);
       setErr("", "chat");
       renderAttachments();
@@ -526,8 +537,9 @@
       }
     }
     try {
+      var epoch = attachmentEpoch;
       var loaded = await Promise.all(incoming.map(readFile));
-      if (busying) return;
+      if (busying || epoch !== attachmentEpoch) return;
       imageAttachments = imageAttachments
         .concat(loaded)
         .slice(0, maxImageAttachments);
@@ -537,6 +549,50 @@
       setErr(error.message || "Could not add that reference image.", "image");
     } finally {
       imgFileInput.value = "";
+    }
+  }
+
+  // Attachments are embedded as full base64 data URLs and the chat route caps
+  // its body at 20 MB, so images across several turns would fail with 413.
+  // Drop just the image parts from the OLDEST image-bearing messages (keeping
+  // their text, the newest images, and always the current turn) until the
+  // payload is back under budget.
+  function shrinkConvos() {
+    // Above the largest possible single message (3 × 4 MiB images ≈ 16 MiB
+    // base64) so the current turn's images are never stripped.
+    var LIMIT = 17 * 1024 * 1024;
+    function imageBytes() {
+      var size = 0;
+      convos.forEach(function (message) {
+        if (!Array.isArray(message.content)) return;
+        message.content.forEach(function (part) {
+          if (part && part.type === "image_url" && part.image_url)
+            size += String(part.image_url.url || "").length;
+        });
+      });
+      return size;
+    }
+    var withImages = [];
+    convos.forEach(function (message, index) {
+      if (!Array.isArray(message.content)) return;
+      var hasImage = message.content.some(function (part) {
+        return part && part.type === "image_url";
+      });
+      if (hasImage) withImages.push(index);
+    });
+    // The newest image-bearing message is the current turn: never strip it.
+    for (var i = 0; i < withImages.length - 1 && imageBytes() > LIMIT; i++) {
+      var index = withImages[i];
+      var content = convos[index].content;
+      var kept = content.filter(function (part) {
+        return !part || part.type !== "image_url";
+      });
+      if (!kept.length)
+        kept.push({
+          type: "text",
+          text: "[image attachment omitted to keep the request under the size limit]",
+        });
+      convos[index] = { role: convos[index].role, content: kept };
     }
   }
 
@@ -581,6 +637,7 @@
     var bubble = null;
 
     try {
+      shrinkConvos();
       var response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: apiHeaders(),
@@ -672,6 +729,11 @@
       }
       convos.push({ role: "assistant", content: answer });
     } catch (error) {
+      // Stop the stream too: a mid-stream parse/error throw used to leave the
+      // response body downloading with its abort timer cleared in finally.
+      try {
+        controller.abort();
+      } catch (_) {}
       if (typing.parentNode) typing.parentNode.removeChild(typing);
       convos.pop();
       if (userBubble.parentNode) userBubble.parentNode.remove();
@@ -694,6 +756,7 @@
 
   function clearChat() {
     if (busying) return;
+    attachmentEpoch++;
     convos = [];
     attachments = [];
     renderAttachments();
@@ -721,6 +784,10 @@
     setBusy(true);
     app.classList.add("loading-img");
     imgEmpty.style.display = "none";
+    var controller = new AbortController();
+    var timeout = setTimeout(function () {
+      controller.abort();
+    }, 190000);
     try {
       var response = await fetch("/api/ai/images", {
         method: "POST",
@@ -732,6 +799,7 @@
             return attachment.dataUrl;
           }),
         }),
+        signal: controller.signal,
       });
       var data = await response.json().catch(function () {
         return {};
@@ -751,11 +819,13 @@
         var card = document.createElement("div");
         card.className = "ai-img-card";
         var element = document.createElement("img");
+        var mime = /^image\/(png|jpeg|webp|gif)$/.test(
+          String(image.mime_type || ""),
+        )
+          ? image.mime_type
+          : "image/png";
         element.src = image.b64_json
-          ? "data:" +
-            (image.mime_type || "image/png") +
-            ";base64," +
-            image.b64_json
+          ? "data:" + mime + ";base64," + image.b64_json
           : image.url;
         element.alt = prompt;
         element.referrerPolicy = "no-referrer";
@@ -772,6 +842,7 @@
         "image",
       );
     } finally {
+      clearTimeout(timeout);
       setBusy(false);
       app.classList.remove("loading-img");
       imgEmpty.style.display = imgGrid.children.length ? "none" : "";

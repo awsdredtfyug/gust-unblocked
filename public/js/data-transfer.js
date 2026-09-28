@@ -32,6 +32,9 @@
     "BigUint64Array",
     "DataView",
   ];
+  // A crafted/corrupt backup could declare version 2^53 and permanently
+  // brick a game database whose code opens it with a fixed version.
+  var MAX_DB_VERSION = 10000;
   var own = function (object, key) {
     return Object.prototype.hasOwnProperty.call(object, key);
   };
@@ -393,7 +396,9 @@
       (!data.localStorage && !data.indexedDB)
     )
       throw new Error("This is not an Aetheris backup.");
-    var legacy = data.format !== "aetheris-backup";
+    var legacy = data.format === undefined;
+    if (!legacy && data.format !== "aetheris-backup")
+      throw new Error("This is not an Aetheris backup.");
     if (!legacy && data.version !== 2)
       throw new Error("Unsupported backup version.");
     var settings = Object.create(null);
@@ -429,6 +434,12 @@
         };
         if (!Number.isSafeInteger(prepared.version) || prepared.version < 1)
           throw new Error("Invalid database version.");
+        if (prepared.version > MAX_DB_VERSION)
+          throw new Error(
+            "Database version in this backup is unreasonably high (max " +
+              MAX_DB_VERSION +
+              ").",
+          );
         for (var storeName of Object.keys(stores)) {
           var store = stores[storeName];
           if (!store || typeof store !== "object")
@@ -475,7 +486,12 @@
     } catch (error) {
       if (error.name !== "AbortError") throw error;
     }
-    var version = Math.max(db ? db.version : 1, saved.version);
+    // Never jump straight to a backup-declared version: a version far ahead
+    // of the database's own cannot be reopened by game code that calls
+    // indexedDB.open(name, <fixed version>) and throws VersionError forever.
+    var version = db
+      ? Math.min(Math.max(db.version, saved.version), db.version + 1)
+      : Math.min(saved.version, MAX_DB_VERSION);
     var needsUpgrade = !db || (db && db.version < version);
     var names = Object.keys(saved.stores);
     if (!names.length) {

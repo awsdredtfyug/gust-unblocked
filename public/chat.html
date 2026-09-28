@@ -18,18 +18,31 @@
     <script src="register-sw.js?v=20260907.1" defer></script>
     <script defer src="./js/preload.js?v=20260907.1"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="./css/usability.css?v=20260907.1" />
+    <link rel="stylesheet" href="./css/usability.css?v=20260928.1" />
   </head>
 
   <body>
     <div id="auth-page">
       <div class="auth-card">
         <div class="auth-logo">💬 Aetheris <em>DMs</em></div>
-        <div class="auth-tabs">
-          <button id="tab-login" class="active" onclick="switchtab('login')">
+        <div class="auth-tabs" role="tablist" aria-label="Account">
+          <button
+            id="tab-login"
+            role="tab"
+            aria-selected="true"
+            class="active"
+            onclick="switchtab('login')"
+          >
             Log in
           </button>
-          <button id="tab-reg" onclick="switchtab('register')">Register</button>
+          <button
+            id="tab-reg"
+            role="tab"
+            aria-selected="false"
+            onclick="switchtab('register')"
+          >
+            Register
+          </button>
         </div>
         <div class="fi">
           <input

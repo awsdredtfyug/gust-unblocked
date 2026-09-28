@@ -256,7 +256,7 @@
         }
       })();
     </script>
-    <link rel="stylesheet" href="./css/usability.css?v=20260917.1" />
+    <link rel="stylesheet" href="./css/usability.css?v=20260928.1" />
   </head>
 
   <body>
@@ -784,6 +784,9 @@
     <!-- Report modal overlay -->
     <div
       id="report-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="report-title"
       style="
         display: none;
         position: fixed;
@@ -827,6 +830,7 @@
             <span style="font-size: 20px">🚩</span>
             <div>
               <div
+                id="report-title"
                 style="
                   font-size: 15px;
                   font-weight: 700;
@@ -843,6 +847,7 @@
           </div>
           <button
             onclick="closereport()"
+            aria-label="Close report form"
             onmouseover="this.style.background = 'rgba(255,255,255,0.12)'"
             onmouseout="this.style.background = 'rgba(255,255,255,0.06)'"
             style="
@@ -864,7 +869,8 @@
         </div>
 
         <div style="margin-bottom: 16px">
-          <label
+          <span
+            id="report-type-label"
             style="
               font-size: 11px;
               opacity: 0.55;
@@ -873,9 +879,13 @@
               display: block;
               margin-bottom: 8px;
             "
-            >whats wrong?</label
+            >whats wrong?</span
           >
-          <div style="display: flex; flex-wrap: wrap; gap: 7px">
+          <div
+            role="group"
+            aria-labelledby="report-type-label"
+            style="display: flex; flex-wrap: wrap; gap: 7px"
+          >
             <button
               class="rtype"
               onclick="pickreporttype(this, 'Game not loading')"
@@ -920,6 +930,7 @@
 
         <div style="margin-bottom: 16px">
           <label
+            for="report-steps"
             style="
               font-size: 11px;
               opacity: 0.55;
@@ -955,6 +966,7 @@
 
         <div style="margin-bottom: 20px">
           <label
+            for="report-notes"
             style="
               font-size: 11px;
               opacity: 0.55;
@@ -1038,6 +1050,8 @@
 
         <div
           id="report-status"
+          role="status"
+          aria-live="polite"
           style="
             display: none;
             margin-top: 14px;
@@ -1467,12 +1481,16 @@
       // getdeviceid lives in ./js/dm-shared.js (loaded in <head>)
 
       var reporttype = "";
+      var lastReportFocus = null;
 
       function pickreporttype(btn, label) {
         var all = document.querySelectorAll(".rtype");
-        for (var i = 0; i < all.length; i++)
+        for (var i = 0; i < all.length; i++) {
           all[i].classList.remove("selected");
+          all[i].setAttribute("aria-pressed", "false");
+        }
         btn.classList.add("selected");
+        btn.setAttribute("aria-pressed", "true");
         reporttype = label;
       }
 
@@ -1482,10 +1500,13 @@
           (titleel && titleel.textContent.trim()) || "Unknown game";
         document.getElementById("report-game-name").textContent = gamename;
 
+        lastReportFocus = document.activeElement;
         reporttype = "";
         var btns = document.querySelectorAll(".rtype");
-        for (var i = 0; i < btns.length; i++)
+        for (var i = 0; i < btns.length; i++) {
           btns[i].classList.remove("selected");
+          btns[i].setAttribute("aria-pressed", "false");
+        }
         document.getElementById("report-steps").value = "";
         document.getElementById("report-notes").value = "";
         document.getElementById("report-status").style.display = "none";
@@ -1505,6 +1526,7 @@
           modal.style.opacity = "1";
           modal.style.transform = "scale(1) translateY(0)";
         });
+        document.getElementById("report-steps").focus();
       }
 
       function closereport() {
@@ -1515,6 +1537,10 @@
         setTimeout(function () {
           overlay.style.display = "none";
         }, 200);
+        if (lastReportFocus && lastReportFocus.isConnected) {
+          lastReportFocus.focus();
+          lastReportFocus = null;
+        }
       }
 
       document

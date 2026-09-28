@@ -311,6 +311,97 @@ test("a malformed WebSocket upstream cannot crash the server", async () => {
   assert.equal((await api("/online-count")).status, 200);
 });
 
+test("lc-relay rejects cross-origin upgrades and accepts same-origin hosts", async () => {
+  const wsBase = base.replace("http:", "ws:");
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsBase + "/lc-relay", {
+      headers: { origin: "https://evil.example" },
+    });
+    const timer = setTimeout(
+      () => reject(new Error("cross-origin upgrade hung")),
+      5000,
+    );
+    ws.on("open", () => {
+      clearTimeout(timer);
+      ws.close();
+      reject(new Error("cross-origin upgrade was accepted"));
+    });
+    ws.on("error", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    ws.on("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+
+  // A same-origin host can create a room and receives JOINED (opcode 2, id 0).
+  const joinedId = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsBase + "/lc-relay", {
+      headers: { origin: base },
+    });
+    const timer = setTimeout(
+      () => reject(new Error("same-origin join timed out")),
+      5000,
+    );
+    ws.on("open", () => {
+      const room = Buffer.from("TESTROOM");
+      const version = Buffer.from("1.0");
+      const frame = Buffer.concat([
+        Buffer.from([1, 0, room.length]),
+        room,
+        Buffer.from([version.length]),
+        version,
+      ]);
+      ws.send(frame);
+    });
+    ws.on("message", (data) => {
+      const buf = Buffer.from(data);
+      if (buf[0] !== 2) return;
+      clearTimeout(timer);
+      ws.close();
+      resolve(buf[1]);
+    });
+    ws.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+  assert.equal(joinedId, 0);
+
+  // Crafted control characters in a room code are rejected instead of
+  // reaching the server log.
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsBase + "/lc-relay", {
+      headers: { origin: base },
+    });
+    const timer = setTimeout(
+      () => reject(new Error("crafted join hung")),
+      5000,
+    );
+    ws.on("open", () => {
+      const room = Buffer.from("bad\r\nroom");
+      const version = Buffer.from("1.0");
+      ws.send(
+        Buffer.concat([
+          Buffer.from([1, 0, room.length]),
+          room,
+          Buffer.from([version.length]),
+          version,
+        ]),
+      );
+    });
+    const finish = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    ws.on("close", finish);
+    ws.on("error", finish);
+  });
+  assert.equal((await api("/online-count")).status, 200);
+});
+
 test("account deletion removes counterpart conversations", async () => {
   const result = await api("/api/accounts/delete", {
     method: "DELETE",

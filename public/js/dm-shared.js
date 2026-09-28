@@ -8,12 +8,14 @@ var authtoken = Aetheris.getToken();
 var myusername = Aetheris.storage.getItem("dmUsername") || "";
 
 function savetoken(t) {
+  if (typeof t !== "string" || !t) return false;
   authtoken = t;
   try {
     sessionStorage.setItem("dmToken", t);
   } catch (_) {}
   if (autologin) Aetheris.storage.setItem("dmToken", t);
   else Aetheris.storage.removeItem("dmToken");
+  return true;
 }
 
 function cleartoken() {
@@ -35,7 +37,8 @@ function esc(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function timeago(ts) {
@@ -64,7 +67,7 @@ async function getdeviceid() {
         return b.toString(16).padStart(2, "0");
       })
       .join("");
-  } else {
+  } else if (crypto.subtle && crypto.subtle.digest) {
     // last resort for ancient browsers: hash a fingerprint. still 64 hex chars.
     var raw = [
       navigator.userAgent,
@@ -84,6 +87,12 @@ async function getdeviceid() {
         return b.toString(16).padStart(2, "0");
       })
       .join("");
+  } else {
+    var unavailable = new Error(
+      "This browser can't create a secure device id. Enable cookies/localStorage and retry from a modern browser.",
+    );
+    unavailable.aetherisFriendly = true;
+    throw unavailable;
   }
 
   Aetheris.storage.setItem("dmDeviceId", hex);
@@ -100,6 +109,12 @@ function switchtab(t) {
   document
     .getElementById("tab-reg")
     .classList.toggle("active", t === "register");
+  document
+    .getElementById("tab-login")
+    .setAttribute("aria-selected", String(t === "login"));
+  document
+    .getElementById("tab-reg")
+    .setAttribute("aria-selected", String(t === "register"));
   document.getElementById("auth-submit").textContent =
     t === "login" ? "Log in" : "Register";
   document.getElementById("auth-err").textContent = "";
@@ -149,13 +164,19 @@ async function submitauth() {
       return;
     }
     // register returns a session token directly now — no second login call
-    savetoken(d.token);
+    if (!savetoken(d.token)) {
+      e.textContent = "The server did not return a session. Please try again.";
+      return;
+    }
     myusername = d.username;
     Aetheris.storage.setItem("dmUsername", myusername);
     document.getElementById("f-pass").value = "";
     showapp();
-  } catch (_) {
-    e.textContent = "Could not sign in. Check your connection and try again.";
+  } catch (error) {
+    e.textContent =
+      error && error.aetherisFriendly
+        ? error.message
+        : "Could not sign in. Check your connection and try again.";
   } finally {
     clearTimeout(timer);
     authSubmitting = false;

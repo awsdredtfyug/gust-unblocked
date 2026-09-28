@@ -10,6 +10,7 @@
     />
     <link rel="stylesheet" href="./css/themes.css?v=20260907.1" />
     <script src="./js/theme.js?v=20260907.1"></script>
+    <title>Aetheris DMs</title>
     <style>
       *,
       *::before,
@@ -622,17 +623,30 @@
         color: rgba(255, 255, 255, 0.6);
       }
     </style>
-    <link rel="stylesheet" href="./css/usability.css?v=20260907.1" />
+    <link rel="stylesheet" href="./css/usability.css?v=20260928.1" />
   </head>
   <body>
     <!-- AUTH -->
     <div id="auth">
       <div class="auth-title">💬 Aetheris <em>DMs</em></div>
-      <div class="tabs">
-        <button id="tab-login" class="active" onclick="switchtab('login')">
+      <div class="tabs" role="tablist" aria-label="Account">
+        <button
+          id="tab-login"
+          role="tab"
+          aria-selected="true"
+          class="active"
+          onclick="switchtab('login')"
+        >
           Log in
         </button>
-        <button id="tab-reg" onclick="switchtab('register')">Register</button>
+        <button
+          id="tab-reg"
+          role="tab"
+          aria-selected="false"
+          onclick="switchtab('register')"
+        >
+          Register
+        </button>
       </div>
       <div class="fi">
         <input
@@ -668,8 +682,15 @@
       <div id="view-inbox">
         <div class="mc-head">
           <span class="mc-head-title">💬 DMs</span>
-          <button class="ib" onclick="logout()" title="Log out">↩</button>
-          <button class="ib" onclick="opennewdm()" title="New message">
+          <button class="ib" onclick="logout()" title="Log out" aria-label="Log out">
+            ↩
+          </button>
+          <button
+            class="ib"
+            onclick="opennewdm()"
+            title="New message"
+            aria-label="New message"
+          >
             ✏️
           </button>
         </div>
@@ -682,7 +703,9 @@
       <!-- CHAT VIEW -->
       <div id="view-chat">
         <div class="mc-head">
-          <button class="back-btn" onclick="showinbox()">‹</button>
+          <button class="back-btn" onclick="showinbox()" aria-label="Back to inbox">
+            ‹
+          </button>
           <div class="av" id="chat-av">?</div>
           <div class="mc-head-title" id="chat-name">—</div>
         </div>
@@ -698,7 +721,9 @@
               autocomplete="off"
             />
           </div>
-          <button class="mc-send" onclick="senddm()">➤</button>
+          <button class="mc-send" onclick="senddm()" aria-label="Send message">
+            ➤
+          </button>
         </div>
       </div>
     </div>
@@ -708,15 +733,19 @@
       id="modal-newdm"
       class="mbg"
       style="display: none"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="newdm-title"
       onclick="if (event.target === this) closemodal('modal-newdm');"
     >
       <div class="modal">
-        <h3>New message</h3>
+        <h3 id="newdm-title">New message</h3>
         <div class="msrch">
           <input
             id="user-search"
             type="text"
             placeholder="search users..."
+            aria-label="Search users"
             autocomplete="off"
           />
         </div>
@@ -774,7 +803,7 @@
         } catch (_) {}
         cleartoken();
         myusername = "";
-        localStorage.removeItem("dmUsername");
+        Aetheris.storage.removeItem("dmUsername");
         showauth();
       }
 
@@ -855,6 +884,14 @@
             esc(c.lastMessage) +
             "</div></div>" +
             badge;
+          it.setAttribute("role", "button");
+          it.tabIndex = 0;
+          it.addEventListener("keydown", function (event) {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              it.click();
+            }
+          });
           it.addEventListener("click", function () {
             openconvo(c.with.toLowerCase(), c.with);
           });
@@ -1095,6 +1132,14 @@
             var el = document.createElement("div");
             el.className = "uitem";
             el.innerHTML = '<div class="uav">' + ini(u) + "</div>" + esc(u);
+            el.setAttribute("role", "button");
+            el.tabIndex = 0;
+            el.addEventListener("keydown", function (event) {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                el.click();
+              }
+            });
             el.addEventListener("click", function () {
               closemodal("modal-newdm");
               openconvo(u.toLowerCase(), u);
@@ -1119,6 +1164,13 @@
         .addEventListener("keydown", function (e) {
           if (e.key === "Escape") closemodal("modal-newdm");
         });
+      // Escape must close the dialog wherever focus is, not only inside the
+      // search field.
+      document.addEventListener("keydown", function (e) {
+        if (e.key !== "Escape") return;
+        var modal = document.getElementById("modal-newdm");
+        if (modal && modal.style.display !== "none") closemodal("modal-newdm");
+      });
     </script>
   </body>
 </html>

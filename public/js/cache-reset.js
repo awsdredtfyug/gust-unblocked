@@ -81,7 +81,10 @@
                 .filter(function (reg) {
                   var worker = reg.active || reg.waiting || reg.installing;
                   return (
-                    worker && new URL(worker.scriptURL).pathname === "/sw.js"
+                    worker &&
+                    // endsWith, not ===: the site can be deployed under a
+                    // sub-path and the caches below are still ours.
+                    new URL(worker.scriptURL).pathname.endsWith("/sw.js")
                   );
                 })
                 .map(function (reg) {
@@ -119,7 +122,9 @@
         "Reset was incomplete. " +
           failures
             .map(function (result) {
-              return result.reason.message;
+              return (
+                (result.reason && result.reason.message) || String(result.reason)
+              );
             })
             .join(" "),
       );

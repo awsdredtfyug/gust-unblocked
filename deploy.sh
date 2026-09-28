@@ -26,10 +26,20 @@ echo "-> Restarting app..."
 # Kill only orphaned Aetheris instances before PM2 restarts its managed one.
 # The previous loop also killed PM2's current PID, allowing PM2 to race us by
 # spawning a replacement while the deploy was still cleaning up port 8080.
-managed_pid="$(pm2 pid "$APP_NAME" 2>/dev/null || true)"
+# pgrep matches the script name alone: PM2 starts node with --env-file in
+# between (node --env-file=... index.js), so 'node index\.js' never matched
+# the very processes this loop must skip.
+managed_pids="$(pm2 pid "$APP_NAME" 2>/dev/null | tr -d '\r' || true)"
 orphan_pids=()
-for pid in $(pgrep -f 'node index\.js' 2>/dev/null || true); do
-    if [ "$pid" != "$managed_pid" ] && [ "$(readlink "/proc/$pid/cwd" 2>/dev/null)" = "$APP_DIR" ]; then
+for pid in $(pgrep -f 'index\.js' 2>/dev/null || true); do
+    [ "$(readlink "/proc/$pid/cwd" 2>/dev/null)" = "$APP_DIR" ] || continue
+    managed=false
+    for managed_pid in $managed_pids; do
+        if [ "$pid" = "$managed_pid" ]; then
+            managed=true
+        fi
+    done
+    if [ "$managed" = false ]; then
         echo "-> Stopping orphaned Aetheris PID $pid..."
         kill "$pid" 2>/dev/null || true
         orphan_pids+=("$pid")
@@ -61,6 +71,28 @@ else
         --node-args="--env-file=$ENV_FILE" \
         --kill-timeout 5000
     pm2 save
+fi
+
+# A restart that never binds is still a failed deploy. Verify the app answers
+# on its loopback port before reporting success.
+if command -v curl > /dev/null 2>&1; then
+    healthy=false
+    for _ in {1..40}; do
+        if curl -fsS --max-time 3 "http://127.0.0.1:${PORT:-8080}/online-count" > /dev/null 2>&1; then
+            healthy=true
+            break
+        fi
+        sleep 0.5
+    done
+    if [ "$healthy" = true ]; then
+        echo "-> Health check OK"
+    else
+        echo "!! Health check FAILED: app is not answering on 127.0.0.1:${PORT:-8080}" >&2
+        echo "!! Check: pm2 logs $APP_NAME --err" >&2
+        exit 1
+    fi
+else
+    echo "-> curl not found; skipping post-restart health check"
 fi
 
 echo "Done"

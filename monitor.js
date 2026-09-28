@@ -24,6 +24,16 @@ if (!DISCORD_WEBHOOK) throw new Error("DISCORD_WEBHOOK env var not set");
 // from somewhere else (pm2 from /root, systemd, nohup, ...)
 const APP_DIR = process.env.APP_DIR || dirname(fileURLToPath(import.meta.url));
 
+// Env values are operator-supplied strings; a typo like CHECK_INTERVAL=abc
+// used to become setInterval(tick, NaN) (a hot loop) or connect({port: NaN})
+// (an uncaught RangeError). Parse defensively with bounds.
+function num(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= min && parsed <= max
+    ? parsed
+    : fallback;
+}
+
 const CONFIG = {
   domains: (process.env.DOMAINS || [
     "https://aetheris.win",
@@ -32,16 +42,20 @@ const CONFIG = {
   ].join(",")).split(",").map(s => s.trim()).filter(Boolean),
 
   fallbackHost:   process.env.FALLBACK_HOST     || "127.0.0.1",
-  fallbackPort:   parseInt(process.env.FALLBACK_PORT || "8080"),
-  intervalMs:     parseInt(process.env.CHECK_INTERVAL || "60") * 1000,
-  timeoutMs:      parseInt(process.env.TIMEOUT || "8000"),
+  fallbackPort:   num(process.env.FALLBACK_PORT, 8080, 1, 65535),
+  intervalMs:     num(process.env.CHECK_INTERVAL, 60) * 1000,
+  timeoutMs:      num(process.env.TIMEOUT, 8000),
   appService:     process.env.APP_SERVICE       || "aetheris",
   logFile:        process.env.LOG_FILE          || "/var/log/monitor.log",
   appDir:         APP_DIR,
   envFile:        process.env.ENV_FILE          || `${APP_DIR}/.env`,
 
+  // Minimum gap between automatic recovery actions. Without it a full outage
+  // reloads Caddy / restarts the app every check interval forever.
+  recoveryCooldownMs: num(process.env.RECOVERY_COOLDOWN, 300) * 1000,
+
   // How often to post a summary report to Discord, in MINUTES. Default: 15.
-  reportIntervalMs: parseInt(process.env.REPORT_INTERVAL || "15") * 60 * 1000,
+  reportIntervalMs: num(process.env.REPORT_INTERVAL, 15) * 60 * 1000,
 };
 
 // ─── LOGGING ─────────────────────────────────────────────────────────────────
@@ -67,6 +81,18 @@ function log(msg) {
   console.log(line);
   logStream?.write(line + "\n");
 }
+
+// Drop malformed DOMAINS entries now: new URL() runs deep inside tick() and
+// sendReport(), and an uncaught TypeError there would kill the monitor.
+CONFIG.domains = CONFIG.domains.filter((url) => {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    log(`Ignoring invalid DOMAINS entry: ${url}`);
+    return false;
+  }
+});
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -224,19 +250,25 @@ async function sendReport() {
     const s = state.get(url);
     if (!s) continue;
 
+    const ongoing = s.down && s.since ? Date.now() - s.since : 0;
     reports.push({
       url,
       totalChecks: s.totalChecks,
       upChecks:    s.upChecks,
       isUp:        !s.down,
-      downtimeMs:  s.totalDowntimeMs + (s.down && s.since ? Date.now() - s.since : 0),
+      // Downtime that occurred during THIS window only: completed outages
+      // plus the part of an ongoing outage not reported yet. Resetting a
+      // cumulative total here used to double-count the same outage in every
+      // subsequent report (and again at recovery).
+      downtimeMs:  s.windowDowntimeMs + Math.max(0, ongoing - s.reportedOngoingMs),
       lastError:   s.lastError,
     });
 
-    s.totalChecks     = 0;
-    s.upChecks        = 0;
-    s.totalDowntimeMs = 0;
-    s.lastError       = null;
+    s.totalChecks       = 0;
+    s.upChecks          = 0;
+    s.windowDowntimeMs  = 0;
+    s.reportedOngoingMs = ongoing;
+    s.lastError         = null;
   }
 
   for (const r of reports) {
@@ -268,7 +300,7 @@ async function sendReport() {
             inline: false,
           },
           {
-            name:   "Active Downtime Duration",
+            name:   "Downtime (window)",
             value:  r.downtimeMs > 0 ? formatDuration(r.downtimeMs) : "None",
             inline: true,
           },
@@ -287,13 +319,23 @@ async function sendReport() {
 
 // ─── RECOVERY ────────────────────────────────────────────────────────────────
 
+let lastRecoveryAt = 0;
+
 async function recover(fallbackReachable) {
+  if (Date.now() - lastRecoveryAt < CONFIG.recoveryCooldownMs) {
+    log(
+      `Recovery skipped — last action was ${Math.round((Date.now() - lastRecoveryAt) / 1000)}s ago (cooldown ${CONFIG.recoveryCooldownMs / 1000}s).`,
+    );
+    return;
+  }
+  lastRecoveryAt = Date.now();
   const type = fallbackReachable ? "POSSIBLE_CADDY" : "POSSIBLE_APP";
   log(`Recovery triggered — type: ${type}, fallback reachable: ${fallbackReachable}`);
 
   if (type === "POSSIBLE_CADDY") {
     log("Running: systemctl reload caddy");
-    await run("systemctl reload caddy");
+    const reload = await run("systemctl reload caddy");
+    log(`caddy reload result: ${reload.ok ? "ok" : "FAILED — " + reload.out}`);
     await sleep(2000);
 
     if (!(await systemdActive("caddy"))) {
@@ -302,8 +344,12 @@ async function recover(fallbackReachable) {
       log(`caddy start result: ${res.ok ? "ok" : "FAILED — " + res.out}`);
       await alertRecovery("Caddy", res.ok ? "systemctl start caddy → ok" : `FAILED: ${res.out}`);
     } else {
-      log("caddy reload result: ok");
-      await alertRecovery("Caddy", "systemctl reload caddy → ok");
+      await alertRecovery(
+        "Caddy",
+        reload.ok
+          ? "systemctl reload caddy → ok"
+          : `reload FAILED (${reload.out}); caddy still active`,
+      );
     }
 
   } else {
@@ -348,6 +394,8 @@ const state = new Map(
     totalChecks:      0,
     upChecks:         0,
     totalDowntimeMs:  0,
+    windowDowntimeMs: 0,
+    reportedOngoingMs: 0,
     lastError:        null,
   }])
 );
@@ -386,6 +434,8 @@ async function tickinner() {
     if (s.down) {
       const downtimeMs = Date.now() - s.since;
       s.totalDowntimeMs += downtimeMs;
+      s.windowDowntimeMs += downtimeMs;
+      s.reportedOngoingMs = 0;
       log(`${url} is back UP. Downtime: ${formatDuration(downtimeMs)}`);
       await alertUp(url, downtimeMs);
       s.down  = false;
@@ -427,9 +477,21 @@ async function tickinner() {
 log(`Monitor starting. Watching ${CONFIG.domains.length} domain(s) every ${CONFIG.intervalMs / 1000}s:`);
 for (const d of CONFIG.domains) log(`  ${d}`);
 
-tick();
-setInterval(tick, CONFIG.intervalMs);
-setInterval(sendReport, CONFIG.reportIntervalMs);
+// One rejected promise must never take down the monitor — it needs to be
+// alive precisely when the site is broken. Errors are logged instead.
+function guard(promise, label) {
+  return Promise.resolve(promise).catch((err) => {
+    log(`${label} error: ${(err && err.message) || err}`);
+  });
+}
+
+guard(tick(), "tick");
+setInterval(() => guard(tick(), "tick"), CONFIG.intervalMs);
+setInterval(() => guard(sendReport(), "report"), CONFIG.reportIntervalMs);
+
+process.on("unhandledRejection", (reason) => {
+  log(`Unhandled rejection: ${(reason && reason.message) || reason}`);
+});
 
 process.on("SIGINT",  () => { log("Monitor stopped."); logStream?.end(); process.exit(0); });
 process.on("SIGTERM", () => { log("Monitor stopped."); logStream?.end(); process.exit(0); });

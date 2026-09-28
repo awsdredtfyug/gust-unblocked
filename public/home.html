@@ -26,7 +26,7 @@
 
     <script src="./js/theme.js?v=20260907.1"></script>
     <script src="./js/navigation.js?v=20260907.1"></script>
-    <link rel="stylesheet" href="./css/usability.css?v=20260907.1" />
+    <link rel="stylesheet" href="./css/usability.css?v=20260928.1" />
   </head>
 
   <body>
@@ -41,6 +41,7 @@
           class="dark-search"
           placeholder="search anything..."
           autocomplete="off"
+          aria-label="Search anything"
         />
       </div>
 
@@ -464,7 +465,10 @@
         var backdrop = document.getElementById("updatemodal");
         var closebtn = document.getElementById("updatemodalclose");
         if (!backdrop) return;
-        if (localStorage.getItem("updateDismissed") === UPDATE_VERSION) return;
+        if (
+          Aetheris.storage.getItem("updateDismissed") === UPDATE_VERSION
+        )
+          return;
 
         var labels = ["aight", "bet", "ok", "cool!", "great!"];
         if (closebtn)
@@ -472,9 +476,13 @@
             labels[Math.floor(Math.random() * labels.length)];
 
         backdrop.style.display = "flex";
+        if (closebtn) closebtn.focus();
 
         function dismiss() {
-          localStorage.setItem("updateDismissed", UPDATE_VERSION);
+          // Aetheris.storage never throws (storage may be full/disabled).
+          // Writing directly to localStorage used to block the modal hide
+          // below and lock the page behind an undismissable overlay.
+          Aetheris.storage.setItem("updateDismissed", UPDATE_VERSION);
           backdrop.classList.add("fade-out");
           function hide() {
             backdrop.style.display = "none";
@@ -483,6 +491,7 @@
           backdrop.addEventListener("animationend", hide, { once: true });
           // Performance mode disables animations, so animationend never fires.
           setTimeout(hide, 250);
+          document.removeEventListener("keydown", onesc);
         }
 
         closebtn.addEventListener("click", dismiss);
@@ -492,7 +501,6 @@
         function onesc(e) {
           if (e.key === "Escape" && backdrop.style.display !== "none") {
             dismiss();
-            document.removeEventListener("keydown", onesc);
           }
         }
         document.addEventListener("keydown", onesc);
@@ -566,22 +574,42 @@
       }
     </script>
 
-    <div id="report-overlay" class="report-overlay">
+    <div
+      id="report-overlay"
+      class="report-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="report-title"
+    >
       <div id="report-modal" class="report-modal">
         <div class="report-header">
           <div class="report-title-group">
-            <span class="report-flag">🚩</span>
+            <span class="report-flag" aria-hidden="true">🚩</span>
             <div>
-              <div class="report-title">report something</div>
+              <div class="report-title" id="report-title">
+                report something
+              </div>
               <div class="report-subtitle">general feedback</div>
             </div>
           </div>
-          <button onclick="closereport()" class="report-close">&times;</button>
+          <button
+            onclick="closereport()"
+            class="report-close"
+            aria-label="Close report form"
+          >
+            &times;
+          </button>
         </div>
 
         <div class="report-field">
-          <label class="report-label">whats wrong?</label>
-          <div class="report-types">
+          <span class="report-label" id="report-type-label">
+            whats wrong?
+          </span>
+          <div
+            class="report-types"
+            role="group"
+            aria-labelledby="report-type-label"
+          >
             <button
               class="rtype"
               onclick="pickreporttype(this, 'Site not loading')"
@@ -631,7 +659,7 @@
         </div>
 
         <div class="report-field">
-          <label class="report-label">what happened</label>
+          <label class="report-label" for="report-steps">what happened</label>
           <textarea
             id="report-steps"
             class="report-textarea"
@@ -640,7 +668,7 @@
         </div>
 
         <div class="report-field report-field-last">
-          <label class="report-label">
+          <label class="report-label" for="report-notes">
             anything else? <span class="report-optional">(optional)</span>
           </label>
           <textarea
@@ -661,7 +689,12 @@
           <button onclick="closereport()" class="report-btn-cancel">nah</button>
         </div>
 
-        <div id="report-status" class="report-status"></div>
+        <div
+          id="report-status"
+          class="report-status"
+          role="status"
+          aria-live="polite"
+        ></div>
       </div>
     </div>
 
@@ -669,19 +702,24 @@
       // getdeviceid lives in ./js/dm-shared.js (loaded in <head>)
 
       var reporttype = "";
+      var lastReportFocus = null;
 
       function pickreporttype(btn, label) {
         document.querySelectorAll(".rtype").forEach(function (b) {
           b.classList.remove("selected");
+          b.setAttribute("aria-pressed", "false");
         });
         btn.classList.add("selected");
+        btn.setAttribute("aria-pressed", "true");
         reporttype = label;
       }
 
       function openreport() {
         reporttype = "";
+        lastReportFocus = document.activeElement;
         document.querySelectorAll(".rtype").forEach(function (b) {
           b.classList.remove("selected");
+          b.setAttribute("aria-pressed", "false");
         });
         document.getElementById("report-steps").value = "";
         document.getElementById("report-notes").value = "";
@@ -701,6 +739,8 @@
           modal.style.opacity = "1";
           modal.style.transform = "scale(1) translateY(0)";
         });
+        var steps = document.getElementById("report-steps");
+        if (steps) steps.focus();
       }
 
       function closereport() {
@@ -711,6 +751,10 @@
         setTimeout(function () {
           overlay.style.display = "none";
         }, 200);
+        if (lastReportFocus && lastReportFocus.isConnected) {
+          lastReportFocus.focus();
+          lastReportFocus = null;
+        }
       }
 
       document

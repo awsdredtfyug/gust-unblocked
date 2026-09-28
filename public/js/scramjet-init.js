@@ -47,6 +47,14 @@
           loaded();
           return;
         }
+        // A parser-inserted script that already executed (or failed) will
+        // never fire load/error again. Once the document is fully parsed,
+        // waiting for those events means sitting on the 15s timeout for
+        // nothing.
+        if (document.readyState === "complete") {
+          failed();
+          return;
+        }
         existing.addEventListener("load", loaded, { once: true });
         existing.addEventListener("error", failed, { once: true });
         return;
@@ -193,7 +201,18 @@
         scramjetConfig: { flags: { allowFailedIntercepts: true } },
       });
 
-      await controller.wait();
+      try {
+        await controller.wait();
+      } catch (error) {
+        // Don't leak the transport when controller startup fails: a retry
+        // would otherwise build another one on top of it.
+        try {
+          if (typeof transport.close === "function") transport.close();
+        } catch (_) {
+          /* best effort */
+        }
+        throw error;
+      }
       return controller;
     })().catch(function (err) {
       controllerpromise = null;

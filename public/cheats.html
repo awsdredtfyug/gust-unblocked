@@ -69,6 +69,7 @@
         border: 1px solid rgba(148, 163, 184, 0.5);
         cursor: pointer;
         color: inherit;
+        font-family: inherit;
         min-width: 190px;
         justify-content: center;
         transition:
@@ -186,7 +187,7 @@
         opacity: 0.6;
       }
     </style>
-    <link rel="stylesheet" href="./css/usability.css?v=20260907.1" />
+    <link rel="stylesheet" href="./css/usability.css?v=20260928.1" />
   </head>
 
   <body>
@@ -195,14 +196,14 @@
       <p class="cheats-subtitle">choose a game, then pick a method</p>
 
       <div class="cheats-grid">
-        <div class="cheat-card" onclick="openmenu('kahoot')">
-          <span class="icon">❓</span>
+        <button type="button" class="cheat-card" onclick="openmenu('kahoot')">
+          <span class="icon" aria-hidden="true">❓</span>
           <span class="label">kahoot</span>
-        </div>
-        <div class="cheat-card" onclick="openmenu('blooket')">
-          <span class="icon">📦</span>
+        </button>
+        <button type="button" class="cheat-card" onclick="openmenu('blooket')">
+          <span class="icon" aria-hidden="true">📦</span>
           <span class="label">blooket</span>
-        </div>
+        </button>
       </div>
 
       <div id="menuSection" class="menu-section hidden">
@@ -250,6 +251,14 @@
         gamedata.items.forEach(function (item) {
           var card = document.createElement("div");
           card.className = "menu-item";
+          card.setAttribute("role", "button");
+          card.tabIndex = 0;
+          card.addEventListener("keydown", function (event) {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              card.click();
+            }
+          });
           card.onclick = function () {
             clickcheat(item);
           };
@@ -280,79 +289,120 @@
 
       function clickcheat(item) {
         if (item.copyText) {
-          copyclipboard(item.copyText, item.name);
+          copyclipboard(buildcopytext(item.copyText), item.name);
           return;
         }
         if (item.url) {
           openinproxy(item.url, item.name);
           return;
         }
+        // No action defined (e.g. the Kahoot placeholder): say so instead of
+        // silently doing nothing and looking broken.
+        var grid = document.getElementById("menuGrid");
+        if (!grid || grid.querySelector(".cheat-unavailable")) return;
+        var note = document.createElement("p");
+        note.className = "cheat-unavailable";
+        note.setAttribute("role", "status");
+        note.textContent = "No cheats for this game yet — check back later.";
+        note.style.cssText = "opacity:0.7;font-size:0.85rem;";
+        grid.appendChild(note);
       }
 
-      function eschtml(s) {
-        return String(s)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
+      // The Blooket bookmarklet is hardcoded to aetheris.win; build it from
+      // the origin this page is actually served from so self-hosted forks work.
+      function buildcopytext(text) {
+        return String(text).replace(
+          /https:\/\/aetheris\.win(?=\/)/,
+          location.origin,
+        );
       }
 
       async function getproxy() {
         return window.aetherisProxy.getController();
       }
 
+      function closeproxyoverlay() {
+        var existing = document.getElementById("cheat-overlay");
+        if (existing) existing.remove();
+        document.removeEventListener("keydown", cheatesc);
+      }
+
+      function cheatesc(event) {
+        if (event.key === "Escape") closeproxyoverlay();
+      }
+
+      function showproxyerror(container, error) {
+        container.replaceChildren();
+        var p = document.createElement("p");
+        p.style.cssText = "color:#f87171;padding:20px;";
+        p.setAttribute("role", "alert");
+        p.textContent =
+          "Failed to load through the proxy: " +
+          ((error && error.message) || String(error));
+        container.appendChild(p);
+      }
+
       async function openinproxy(url, displayname) {
         var existing = document.getElementById("cheat-overlay");
         if (existing) existing.remove();
 
-        var label = eschtml(displayname || url);
+        var label = displayname || url;
 
         var overlay = document.createElement("div");
         overlay.id = "cheat-overlay";
+        overlay.setAttribute("role", "dialog");
+        overlay.setAttribute("aria-modal", "true");
+        overlay.setAttribute("aria-label", label);
         overlay.style.cssText =
           "position:fixed;inset:0;z-index:9999;background:#000;display:flex;flex-direction:column;";
 
         var topbar = document.createElement("div");
         topbar.style.cssText =
           "display:flex;align-items:center;justify-content:space-between;padding:6px 14px;background:rgba(15,23,42,0.95);border-bottom:1px solid rgba(148,163,184,0.2);flex-shrink:0;";
-        topbar.innerHTML =
-          '<span style="font-size:0.85rem;opacity:0.7;">' +
-          label +
-          "</span>" +
-          '<button id="cheat-close-btn" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:inherit;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:0.85rem;">✕ close</button>';
+        var title = document.createElement("span");
+        title.style.cssText = "font-size:0.85rem;opacity:0.7;";
+        title.textContent = label;
+        var close = document.createElement("button");
+        close.id = "cheat-close-btn";
+        close.type = "button";
+        close.setAttribute("aria-label", "Close proxy view");
+        close.style.cssText =
+          "background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:inherit;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:0.85rem;";
+        close.textContent = "✕ close";
+        close.addEventListener("click", closeproxyoverlay);
+        topbar.append(title, close);
 
         var contentarea = document.createElement("div");
         contentarea.id = "cheat-frame-container";
         contentarea.style.cssText = "flex:1;width:100%;overflow:hidden;";
-        contentarea.innerHTML =
-          '<div style="color:#aaa;padding:20px;font-size:0.9rem;">Loading ' +
-          label +
-          "…</div>";
+        var loading = document.createElement("div");
+        loading.style.cssText =
+          "color:#aaa;padding:20px;font-size:0.9rem;";
+        loading.setAttribute("role", "status");
+        loading.textContent = "Loading " + label + "…";
+        contentarea.appendChild(loading);
 
         overlay.appendChild(topbar);
         overlay.appendChild(contentarea);
         document.body.appendChild(overlay);
-
-        document
-          .getElementById("cheat-close-btn")
-          .addEventListener("click", function () {
-            overlay.remove();
-          });
+        close.focus();
+        document.addEventListener("keydown", cheatesc);
 
         try {
           var p = await getproxy();
           var frameel = document.createElement("iframe");
           frameel.style.cssText = "width:100%;height:100%;border:0;";
           var frame = p.createFrame(frameel);
-          contentarea.innerHTML = "";
-          contentarea.appendChild(frameel);
-          window.aetherisProxy.go(frame, url);
+          contentarea.replaceChildren(frameel);
+          try {
+            await window.aetherisProxy.go(frame, url);
+          } catch (error) {
+            console.error("proxy navigation failed:", error);
+            showproxyerror(contentarea, error);
+          }
         } catch (err) {
           console.error("proxy load failed:", err);
-          contentarea.innerHTML =
-            '<p style="color:#f87171;padding:20px;">failed to load through proxy: ' +
-            err.message +
-            "</p>";
+          showproxyerror(contentarea, err);
         }
       }
 

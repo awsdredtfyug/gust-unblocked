@@ -428,14 +428,39 @@ async function injecthtmlshims(response, options) {
       (options.desktopua ? desktopuashim : "") +
       audiounlockshim +
       adspoofshim;
-    var injected = /<head[^>]*>/i.test(text)
-      ? text.replace(/<head[^>]*>/i, function (m) {
-          return m + shims;
-        })
-      : shims + text;
+    var injected;
+    if (/<head[^>]*>/i.test(text)) {
+      injected = text.replace(/<head[^>]*>/i, function (m) {
+        return m + shims;
+      });
+    } else if (/<html[^>]*>/i.test(text)) {
+      // No <head>: inserting before the document would put scripts ahead of
+      // the doctype and could force quirks mode.
+      injected = text.replace(/<html[^>]*>/i, function (m) {
+        return m + shims;
+      });
+    } else {
+      injected = shims + text;
+    }
     var newheaders = new Headers(response.headers);
     newheaders.delete("content-length");
-    newheaders.set("Permissions-Policy", "autoplay=*, fullscreen=*");
+    // Override only the features the proxy needs; keep any policy the remote
+    // page declared for camera, microphone, geolocation, and friends.
+    var existingpolicy = newheaders.get("Permissions-Policy") || "";
+    var kept = [];
+    existingpolicy
+      .split(",")
+      .map(function (part) {
+        return part.trim();
+      })
+      .forEach(function (part) {
+        if (!part) return;
+        var name = part.split("=")[0].trim().toLowerCase();
+        if (name === "autoplay" || name === "fullscreen") return;
+        kept.push(part);
+      });
+    kept.push("autoplay=*", "fullscreen=*");
+    newheaders.set("Permissions-Policy", kept.join(", "));
     return new Response(injected, {
       status: response.status,
       statusText: response.statusText,

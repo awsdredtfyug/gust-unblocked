@@ -604,7 +604,11 @@ fastify.addHook("onRequest", async (req, reply) => {
   const isTmdb = req.method === "GET" && path.startsWith("/api/tmdb/");
   const isRelay =
     req.method !== "OPTIONS" &&
-    (path === "/movie-proxy" || path.startsWith("/movie-proxy/"));
+    (path === "/movie-proxy" ||
+      path.startsWith("/movie-proxy/") ||
+      // subtitle compatibility route calls the same proxy handler; keep it
+      // under the same cap or it becomes an unmetered relay bypass
+      path === "/api.php");
   if (req.method !== "POST" && !isModels && !isTmdb && !isRelay) return;
   let limit = 0,
     windowMs = 60000,

@@ -55,25 +55,6 @@ http://127.0.0.1:9999 {
 		}
 	}
 }
-(movie_proxy) {
-	handle_path {args[0]}/* {
-		reverse_proxy {args[1]}:443 {
-			header_up Host {args[1]}
-			header_up Origin https://{args[1]}
-			header_up Referer https://{args[1]}/
-			header_down -X-Frame-Options
-			header_down -Content-Security-Policy
-			header_down -Content-Security-Policy-Report-Only
-			header_down -Cross-Origin-Embedder-Policy
-			header_down -Cross-Origin-Opener-Policy
-			header_down -Cross-Origin-Resource-Policy
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-		}
-	}
-}
 (veck_init) {
 	handle_path /proxy/{args[0]}/api/init {
 		header Content-Type application/json
@@ -107,12 +88,13 @@ https:// {
 	encode zstd gzip
 
 	# CORS Preflight — answered here for every host EXCEPT the vhosts with
-	# their own OPTIONS handling (crax.lol profile, hosting, gpt). A bare
-	# method matcher would hijack preflights for those apps too and override
-	# their CORS posture.
+	# their own OPTIONS handling (crax.lol profile, hosting, gpt) and the
+	# /api/* routes. Wildcard CORS on the authenticated API let any website
+	# drive registration/login/account requests from visitors' browsers.
 	@cors_preflight {
 		method OPTIONS
 		not host crax.lol hosting.crax.lol gpt.crax.lol
+		not path /api/*
 	}
 	handle @cors_preflight {
 		header Access-Control-Allow-Origin "*"

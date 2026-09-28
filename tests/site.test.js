@@ -98,3 +98,68 @@ test("favorites tolerate malformed storage and normalize numeric IDs", () => {
   site.storage.removeItem("value");
   assert.equal(site.storage.getItem("value"), null);
 });
+
+test("navigation fallback is absolute and modified clicks are left to the browser", () => {
+  const listeners = {};
+  const location = {
+    origin: "https://aetheris.test",
+    href: "https://aetheris.test/foo/bar",
+  };
+  const context = {
+    document: {
+      addEventListener(type, handler) {
+        listeners[type] = handler;
+      },
+    },
+    location,
+    console: { error() {} },
+  };
+  context.window = context;
+  context.parent = context;
+  context.self = context;
+  context.top = context;
+  vm.runInNewContext(
+    fs.readFileSync(
+      new URL("../public/js/navigation.js", import.meta.url),
+      "utf8",
+    ),
+    context,
+  );
+
+  // Uncoupled page (served as 404.html for nested URLs): go home absolutely.
+  context.gotoapp("home");
+  assert.equal(location.href, "/index.html#home");
+
+  const click = (overrides) => {
+    let prevented = false;
+    listeners.click({
+      defaultPrevented: false,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      target: { closest: () => ({ getAttribute: () => "./about.html" }) },
+      preventDefault() {
+        prevented = true;
+      },
+      ...overrides,
+    });
+    return prevented;
+  };
+
+  // Ctrl/Cmd-click must reach the browser so it can open a new tab.
+  assert.equal(click({ metaKey: true }), false);
+  assert.equal(click({ ctrlKey: true }), false);
+
+  // Inside the shell, mapped links route through the parent frame.
+  let routed = "";
+  context.parent = {
+    navigateApp(page) {
+      routed = page;
+    },
+  };
+  context.self = { frame: true };
+  assert.equal(click({}), true);
+  assert.equal(routed, "about");
+});

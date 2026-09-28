@@ -12,15 +12,25 @@
 })();
 
 (function () {
-  try {
-    var hasflag =
-      location.search.indexOf("fps") !== -1 ||
-      (window.parent !== window &&
-        window.parent.location.search.indexOf("fps") !== -1);
-    if (!hasflag) return;
-  } catch (e) {
-    if (location.search.indexOf("fps") === -1) return;
+  // Exact flag lookup, not a substring test: a query like
+  // search.html?q=fps+games must not enable the debug overlay.
+  function hasfps(search) {
+    try {
+      return new URLSearchParams(search || "").has("fps");
+    } catch (_) {
+      return false;
+    }
   }
+
+  var hasflag = hasfps(location.search);
+  if (!hasflag && window.parent !== window) {
+    try {
+      hasflag = hasfps(window.parent.location.search);
+    } catch (_) {
+      // cross-origin parent: the local flag is all we can read
+    }
+  }
+  if (!hasflag) return;
 
   var el = document.createElement("div");
   el.style.cssText =
