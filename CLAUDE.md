@@ -96,6 +96,17 @@ These were observed on 2026-09-03 and must be rechecked because providers change
   VidSrc.to as the default on 2026-09-28; VidSrc.to remains as fallback.
   If a 2Embed server recovers VPS access, no code change is needed.
   Recheck, providers change.
+- **2026-09-29 — provider sweep, all candidates rejected.** Probed from the
+  VPS egress + Playwright playback through the live relay (Backrooms
+  tmdb=1083381): `vidsrc.xyz`/`embed.su` DNS-dead; `vidlink.pro` Cloudflare
+  403; SuperEmbed redirects to `streamingnow.mov` (CF challenge) and its VIP
+  endpoint 404s; VidCore app never calls `/api/sources` (error state, dead
+  video); `vidzee` loads but builds no player; `vidsrc.dev` is parked
+  (sedoparking); `cinesrc.st` loads but its stream API `a.cineflix.st`
+  502s; `vidsrc.sh` wraps the same challenged `cloudorchestranova` chain
+  (`sartorialsupernova.space` 403/429/401); `embos.top` resolves no stream;
+  `ployan.me` needs opaque per-session tokens (unusable directly);
+  123moviesfree's own player JS 404s on their server. Nothing to add.
 - A prior attempted movie fix was fully reverted. Commits `3cf60bbe` through
   `8cfd2243` document that rollback; do not reintroduce that design.
 - **2026-09-28 — 2Embed boot errors fixed; upstream media blocks remain.**
