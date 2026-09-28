@@ -490,13 +490,17 @@ Object.assign(wisp.options, {
     /(^|\.)simpcity\.su$/i,
   ],
   port_blacklist: [8080],
-  // Bound what a single Wisp connection can do. The defaults are -1
-  // (unlimited), which lets any anonymous client open unbounded upstream
-  // streams through the VPS; 128 total / 16 per hostname is far above what
-  // real browsing needs while making port-scanning and bandwidth laundering
-  // impractical. Limits are per WebSocket connection.
+  // Bound what a single Wisp connection can do. The default is -1 (unlimited),
+  // which lets any anonymous client open unbounded upstream streams through
+  // the VPS; 128 total makes port-scanning and bandwidth laundering
+  // impractical while staying far above what real browsing needs. Limits are
+  // per WebSocket connection.
+  // stream_limit_per_host must stay -1 on wisp-js 0.4.1: its check does
+  // `for (const stream of connection.streams)` while `streams` is a plain
+  // object, so any other value throws "connection.streams is not iterable"
+  // and the stream never opens. Do not enable it without an upstream fix.
   stream_limit_total: 128,
-  stream_limit_per_host: 16,
+  stream_limit_per_host: -1,
   dns_servers: ["1.1.1.3", "1.0.0.3"],
 });
 
