@@ -118,6 +118,13 @@ These were observed on 2026-09-03 and must be rechecked because providers change
   screenshot-verify. Dropdown entry removed (source list back to 4);
   `/hls-resolve` + `hls-player.html` stay tested in case egress
   reputation ever changes.
+- **2026-09-29 — lul/aether chain rejected (throttled).** The P-Stream
+  `lul.aether.cx` lookup + worker-signed `*.tnmr.org` masters resolve
+  (200) and single requests succeed from the VPS, but follow-on
+  playlist/segment requests 403 more often than not — two clean
+  screenshot-verified playback trials yielded zero frames. Burst
+  throttling, possibly with fast signature expiry mixed in. Entry
+  removed; route stays for a possible re-test after a long cooldown.
 - A prior attempted movie fix was fully reverted. Commits `3cf60bbe` through
   `8cfd2243` document that rollback; do not reintroduce that design.
 - **2026-09-28 — 2Embed boot errors fixed; upstream media blocks remain.**

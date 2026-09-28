@@ -63,26 +63,12 @@ var MOVIES_SOURCES = [
       return "/movie-proxy?url=" + encodeURIComponent(upstream);
     },
   },
-  // NOTE (2026-09-29): an "HLS (hls.lol)" entry lived here. Removed from
-  // the dropdown because the media host serves an "atlantic.st disable
-  // VPN" slate to datacenter egress instead of the title (verified by
-  // screenshot — frame counts alone don't prove content). The /hls-resolve
-  // route + hls-player page stay in place and tested; re-adding is one
-  // entry if egress reputation ever changes.
-  {
-    // P-Stream lul backend (verified 2026-09-29 from the VPS: lookup API
-    // + worker-signed master + child + segments all 200 through the
-    // relay). Plays through the local hls-player page so every byte stays
-    // proxied; appended last so existing source indexes never shift.
-    name: "Aether (lul)",
-    url: function (t, id, s, e) {
-      return (
-        "/hls-player.html?via=lul&type=" +
-        t +
-        "&id=" +
-        id +
-        (t === "tv" ? "&s=" + s + "&e=" + e : "")
-      );
-    },
-  },
+  // NOTE (2026-09-29): "HLS (hls.lol)" and "Aether (lul)" entries lived
+  // here. Both removed from the dropdown: hls.lol serves an
+  // "atlantic.st disable VPN" slate to datacenter egress (screenshot
+  // verified), and the lul/tnmr.org chain 403s follow-on requests from
+  // the VPS more often than not (two clean playback trials, zero
+  // frames). The /hls-resolve route + hls-player page stay in place and
+  // tested; re-adding is one entry each if egress reputation ever
+  // changes.
 ];
