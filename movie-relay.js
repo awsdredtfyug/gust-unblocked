@@ -1288,6 +1288,9 @@ export function registerMovieRelay(
         apiPath += `/${s}/${e}`;
       }
       const apiBase = via === "lul" ? lulApiBase : hlsApiBase;
+      // the lul backend rejects referer-less API calls (403); the hls
+      // backend answers without one
+      const apiReferer = via === "lul" ? "https://aether.ist/" : null;
       let apiUrl;
       try {
         apiUrl = await validateUrl(`${apiBase}${apiPath}`);
@@ -1298,6 +1301,7 @@ export function registerMovieRelay(
       try {
         const apiRes = await fetchValidated(apiUrl, {
           accept: "application/json",
+          referer: apiReferer,
         });
         if (apiRes.status !== 200)
           throw new Error(`API answered ${apiRes.status}`);
