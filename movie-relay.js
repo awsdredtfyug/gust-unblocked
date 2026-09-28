@@ -677,6 +677,7 @@ export function registerMovieRelay(
                 status,
                 headers: response.headers,
                 body: Buffer.concat(chunks),
+                url: currentUrl,
               }),
             );
             response.on("error", reject);
@@ -1326,6 +1327,7 @@ export function registerMovieRelay(
         // without hammering. Anything worse surfaces as a 502 and the
         // viewer can try another source.
         let playlistText = null;
+        let finalUrl = null;
         for (let attempt = 0; attempt < 2 && !playlistText; attempt++) {
           if (attempt > 0)
             await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -1339,12 +1341,18 @@ export function registerMovieRelay(
           const body = playlistRes.body.toString("utf-8");
           // Never serve the bounce page as a playlist: the player would
           // choke on HTML instead of retrying cleanly.
-          if (body.trimStart().startsWith("#EXTM3U")) playlistText = body;
+          if (body.trimStart().startsWith("#EXTM3U")) {
+            playlistText = body;
+            finalUrl = playlistRes.url;
+          }
         }
         if (!playlistText)
           throw new Error("Playlist is not an m3u8 document");
+        // rewrite against the final URL after redirects (a worker URL
+        // 302s to the signed master on another host; entries and the
+        // referer rule must use the master, not the worker)
         const rewritten = await withRewriteSlot(() =>
-          rewriteM3u8(playlistText, playlistUrl),
+          rewriteM3u8(playlistText, finalUrl || playlistUrl),
         );
         console.log(
           `[movie-proxy] hls-resolve ${type} ${id} -> ${playlistUrl.host}${playlistUrl.pathname.slice(0, 32)}`,
