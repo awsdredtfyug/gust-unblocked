@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8" />
-<base href="https://raw.githack.com/mynamescrax/gamesforaetheris/main/bowmasters/" />
+<base href="https://raw.githubusercontent.com/mynamescrax/gamesforaetheris/main/bowmasters/" />
 <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
 <title>balf games inc</title>
 <link rel="manifest" href="manifest.json" />
@@ -31,7 +31,48 @@
 		-ms-touch-action: none;
 	}
 </style>
-<link href="animate.min.css" rel="stylesheet" type="text/css" />
+<link href="https://raw.githack.com/mynamescrax/gamesforaetheris/main/bowmasters/animate.min.css" rel="stylesheet" type="text/css" />
+<script>
+	// raw.githubusercontent serves JavaScript as text/plain (so scripts come from
+	// raw.githack.com), and browsers can refuse redirected/CDN images as WebGL
+	// textures with "cross-origin elements require CORS". Fetch image bytes with
+	// CORS and hand the runtime same-origin blob URLs, which are always clean.
+	(function () {
+		if (!window.fetch || !window.Blob || !window.URL || !URL.createObjectURL) return;
+		var desc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+		if (!desc || !desc.set || !desc.get) return;
+		Object.defineProperty(HTMLImageElement.prototype, "src", {
+			configurable: true,
+			enumerable: desc.enumerable,
+			get: function () { return desc.get.call(this); },
+			set: function (value) {
+				var img = this;
+				var url;
+				try {
+					url = new URL(String(value), document.baseURI).href;
+				} catch (e) {
+					desc.set.call(img, value);
+					return;
+				}
+				if (!/^https?:/i.test(url) || url.indexOf(location.origin + "/") === 0) {
+					desc.set.call(img, value);
+					return;
+				}
+				fetch(url, { mode: "cors" })
+					.then(function (response) {
+						if (!response.ok) throw new Error("HTTP " + response.status);
+						return response.blob();
+					})
+					.then(function (blob) {
+						desc.set.call(img, URL.createObjectURL(blob));
+					})
+					.catch(function () {
+						desc.set.call(img, value);
+					});
+			},
+		});
+	})();
+</script>
 </head>
 <body>
 <div id="fb-root"></div>
@@ -79,31 +120,10 @@
 	document.addEventListener("webkitvisibilitychange", onVisibilityChanged, false);
 	document.addEventListener("msvisibilitychange", onVisibilityChanged, false);
 	
-	function OnRegisterSWError(e)
-	{
-		console.warn("Failed to register service worker: ", e);
-	};
-	
-	// Runtime calls this global method when ready to start caching (i.e. after startup).
-	// This registers the service worker which caches resources for offline support.
-	window.C2_RegisterSW = function C2_RegisterSW()
-	{
-		if (!navigator.serviceWorker)
-			return;		// no SW support, ignore call
-		
-		try {
-			navigator.serviceWorker.register("", { scope: "./" })
-			.then(function (reg)
-			{
-				console.log("Registered service worker on " + reg.scope);
-			})
-			.catch(OnRegisterSWError);
-		}
-		catch (e)
-		{
-			OnRegisterSWError(e);
-		}
-	};
+	// Offline caching is intentionally disabled: the C2 service worker cannot
+	// be registered from this cross-origin CDN host, and simply having
+	// C2_RegisterSW defined makes the runtime try to load offlineClient.js,
+	// which the browser blocks (text/plain script with nosniff).
 </script>
 <div id="more_g" style="position:absolute;top:0;right:0;z-index:1000"><a href="https://igroutka.ru/?utm_source=game_loader" target="_blank" title="Игроутка - бесплатные онлайн игры"><img src="https://m.igroutka.ru/files/img/logo-mini.png" width="180" height="47" alt="Игроутка - бесплатные онлайн игры" /></a></div>
 <a id="game_lock" style="display:none;position:absolute;top:0;right:0;left:0;bottom:0;width:100%;height:100%;z-index:999;" href="https://igroutka.ru/?utm_source=game_lock" target="_blank"></a>
