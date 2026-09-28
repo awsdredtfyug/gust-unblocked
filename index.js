@@ -27,6 +27,7 @@ import { lcRelayUpgrade } from "./lc-relay.js";
 import { registerMovieRelay } from "./movie-relay.js";
 import { createRateLimiter } from "./lib/rate-limit.js";
 import { downloadPublicImage, resolvePublicUrl } from "./lib/public-network.js";
+import { uniqueOnlineCount } from "./lib/online.js";
 
 // Load local development configuration before any feature reads process.env.
 // Values supplied by the host environment keep precedence over .env values.
@@ -449,14 +450,22 @@ Object.assign(wisp.options, {
 // --- online counter (SSE) ---
 
 const clients = new Set();
+// SSE stream -> persistent per-browser id (?c=... in the /online URL), so
+// several tabs (or reconnects) from one device count once. Streams without
+// an id — old cached shells, bots, health checks — count individually.
+const clientids = new Map();
 let broadcastpending = null;
+
+function onlinecount() {
+  return uniqueOnlineCount(clients, clientids);
+}
 
 function broadcastcount() {
   if (broadcastpending) return;
   // coalesce rapid connect/disconnect bursts into a single write
   broadcastpending = setTimeout(() => {
     broadcastpending = null;
-    const msg = `data: ${clients.size}\n\n`;
+    const msg = `data: ${onlinecount()}\n\n`;
     for (const res of clients) {
       try {
         res.write(msg);
@@ -652,17 +661,33 @@ fastify.get("/online", (req, reply) => {
     "X-Accel-Buffering": "no",
     "Access-Control-Allow-Origin": "*",
   });
+  // Detect dead peers instead of counting them until the OS TCP timeout.
+  try {
+    req.raw.socket.setKeepAlive(true, 30_000);
+  } catch {
+    // socket already gone; the close handler below cleans up
+  }
+  let clientid = "";
+  try {
+    clientid = String(
+      new URL(req.url, "http://localhost").searchParams.get("c") || "",
+    ).slice(0, 64);
+  } catch {
+    // malformed URL counts as an anonymous connection
+  }
   clients.add(res);
+  if (clientid) clientids.set(res, clientid);
   broadcastcount();
   req.raw.on("close", () => {
     clients.delete(res);
+    clientids.delete(res);
     broadcastcount();
   });
 });
 
 fastify.get("/online-count", (_req, reply) => {
   reply.header("Access-Control-Allow-Origin", "*");
-  reply.send({ count: clients.size });
+  reply.send({ count: onlinecount() });
 });
 
 // cached responses for the top/counts endpoints — recalculated every 10s at most
@@ -878,7 +903,7 @@ async function poststats() {
         title: "📊 Site Stats",
         color: 0xa855f7,
         fields: [
-          { name: "👥 Online Now", value: String(clients.size), inline: true },
+          { name: "👥 Online Now", value: String(onlinecount()), inline: true },
           { name: "🎮 Total Plays", value: String(totalplays), inline: true },
           {
             name: "🔥 Top 5 Games",

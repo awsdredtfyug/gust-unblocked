@@ -828,8 +828,23 @@
           if (lastcount !== null) sendcount(lastcount);
         });
 
+        // One persistent id per browser, so multiple tabs (and reconnects)
+        // count once in the online counter instead of once per SSE stream.
+        function clientid() {
+          var key = "aetheris-client-id";
+          var id = Aetheris.storage.getItem(key);
+          if (!id) {
+            id =
+              window.crypto && typeof crypto.randomUUID === "function"
+                ? crypto.randomUUID()
+                : "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+            Aetheris.storage.setItem(key, id);
+          }
+          return id;
+        }
+
         function connect() {
-          var es = new EventSource("/online");
+          var es = new EventSource("/online?c=" + encodeURIComponent(clientid()));
           es.onmessage = function (e) {
             var n = parseInt(e.data, 10);
             if (isNaN(n)) return;
