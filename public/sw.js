@@ -76,8 +76,41 @@ function persistspoofstate(enabled) {
     .catch(function () {});
 }
 
+// Desktop-UA spoofing. On a Chromium browser the claimed Chrome version
+// follows the real one, so the spoofed navigator.userAgent matches the
+// Sec-CH-UA request headers the browser actually generates. Safari (iPad)
+// has no Chrome version to borrow, so it claims a recent stable one — keep
+// CHROME_FALLBACK_MAJOR roughly current or version-gated sites start
+// treating the spoof as an unsupported browser.
+var CHROME_FALLBACK_MAJOR = "154";
+var spoofchromemajor = (function () {
+  var match = /(?:Chrome|Chromium)\/(\d+)/.exec(navigator.userAgent);
+  return match ? match[1] : CHROME_FALLBACK_MAJOR;
+})();
+var spooffullversion = spoofchromemajor + ".0.0.0";
+var spoofbrandsjson = JSON.stringify([
+  { brand: "Chromium", version: spoofchromemajor },
+  { brand: "Google Chrome", version: spoofchromemajor },
+  { brand: "Not=A?Brand", version: "99" },
+]);
+// Request-header values matching the shim below, applied in buildrouteevent.
+var spoofuach =
+  '"Chromium";v="' +
+  spoofchromemajor +
+  '", "Google Chrome";v="' +
+  spoofchromemajor +
+  '", "Not=A?Brand";v="99"';
+var spoofuachfull =
+  '"Chromium";v="' +
+  spooffullversion +
+  '", "Google Chrome";v="' +
+  spooffullversion +
+  '", "Not=A?Brand";v="99.0.0.0"';
+
 var desktopua =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" +
+  spooffullversion +
+  " Safari/537.36";
 
 var desktopuashim =
   "<script>" +
@@ -98,11 +131,9 @@ var desktopuashim =
   '    Object.defineProperty(Navigator.prototype, "userAgentData", {' +
   "      get: function(){" +
   "        return {" +
-  "          brands: [" +
-  '            { brand: "Chromium", version: "120" },' +
-  '            { brand: "Google Chrome", version: "120" },' +
-  '            { brand: "Not=A?Brand", version: "99" }' +
-  "          ]," +
+  "          brands: " +
+  spoofbrandsjson +
+  "," +
   "          mobile: false," +
   '          platform: "Windows",' +
   "          getHighEntropyValues: function(hints) {" +
@@ -114,7 +145,9 @@ var desktopuashim =
   '              bitness: "64",' +
   '              model: "",' +
   '              platformVersion: "10.0.0",' +
-  '              uaFullVersion: "120.0.0.0",' +
+  "              uaFullVersion: " +
+  JSON.stringify(spooffullversion) +
+  "," +
   "              fullVersionList: this.brands" +
   "            };" +
   "            var out = {};" +
@@ -137,13 +170,23 @@ var desktopuashim =
 // scramjet-init.js) and get the already-rewritten Response back over a
 // MessageChannel. There's no more loadConfig()/configready gate — a request
 // either matches a live tab's prefix (shouldRoute) or it doesn't.
-try {
-  importScripts("/controller/controller.sw.js");
-  scramjetloaded = true;
-} catch (err) {
-  console.error("[SW] Scramjet controller failed to load:", err);
-  scramjetloaded = false;
+// Import at startup is the happy path, but a transient network failure during
+// a service-worker cold start must not disable the proxy until the next
+// deploy: re-attempt the import from the fetch handler whenever a request
+// actually needs the controller. importScripts is idempotent inside one
+// worker, so repeat calls after a success are a no-op (scramjetloaded gate).
+function ensurecontrollerloaded() {
+  if (scramjetloaded) return true;
+  try {
+    importScripts("/controller/controller.sw.js");
+    scramjetloaded = true;
+  } catch (err) {
+    console.error("[SW] Scramjet controller failed to load:", err);
+    scramjetloaded = false;
+  }
+  return scramjetloaded;
 }
+ensurecontrollerloaded();
 
 // Builds the object we hand to $scramjetController.route(). It duck-types the
 // fields route()/shouldRoute() actually read off a FetchEvent, for two reasons.
@@ -190,6 +233,14 @@ async function buildrouteevent(event) {
       headers.set("User-Agent", desktopua);
       headers.set("Sec-CH-UA-Mobile", "?0");
       headers.set("Sec-CH-UA-Platform", '"Windows"');
+      // Client hints would otherwise leak the real engine/version and
+      // contradict the spoofed UA. A bare Headers() is unguarded, so these
+      // Sec- names are not filtered out here (see the note above).
+      headers.set("Sec-CH-UA", spoofuach);
+      headers.set("Sec-CH-UA-Full-Version-List", spoofuachfull);
+      headers.set("Sec-CH-UA-Platform-Version", '"10.0.0"');
+      headers.set("Sec-CH-UA-Arch", '"x86"');
+      headers.set("Sec-CH-UA-Bitness", '"64"');
     } else {
       headers = req.headers;
     }
@@ -366,9 +417,29 @@ var audiounlockshim =
   "})();" +
   "<\/script>";
 
-// Ad spoof shim — loaded from /js/ad-spoof.js (same-origin, no async/defer so it
-// executes synchronously before any game scripts; absolute path bypasses <base href>)
-var adspoofshim = '<script src="/js/ad-spoof.js"><\/script>';
+// Ad spoof shim. Inlined into proxied documents once the source has been
+// fetched, with the external tag as the fallback until then (and if the fetch
+// ever fails). The inline form matters for sites like YouTube that enumerate
+// script elements: scramjet's patched URL getters call unrewriteUrl() on every
+// local <script src> they see, which logs an "unexpected url" error each time.
+// Inline executes synchronously before game scripts, same as before.
+var ADSPOOF_SRC = "/js/ad-spoof.js?v=20260928.3";
+var adspoofshim = '<script src="' + ADSPOOF_SRC + '"><\/script>';
+var adspoofinline = null;
+(function warmadspoof() {
+  fetch(ADSPOOF_SRC)
+    .then(function (response) {
+      return response.ok ? response.text() : "";
+    })
+    .then(function (text) {
+      if (!text) return;
+      adspoofinline =
+        "<script>" + text.replace(/<\/script/gi, "<\\/script") + "<\/script>";
+    })
+    .catch(function () {
+      /* the external fallback tag still works */
+    });
+})();
 
 // Panic key — reads the same origin localStorage the settings page writes
 // (proxied pages are same-origin under /~/sj/, so this works inside games
@@ -412,7 +483,120 @@ var cookieenabledshim =
   "})();" +
   "<\/script>";
 
-async function injecthtmlshims(response, options) {
+// Cap on how much HTML to buffer while looking for the <head>/<html> tag.
+// Documents are expected to have one near the top; anything larger than this
+// is treated as "no usable tag" and the shims go at the front, matching the
+// previous non-streaming fallback.
+var SHIM_SCAN_LIMIT = 256 * 1024;
+
+// Streams an HTML body through a UTF-8 decode/re-encode so the shims can be
+// inserted as soon as the insertion point is found. The previous version
+// buffered the whole document (text(), replace, re-encode) before the page
+// could render anything, which is both a memory spike and a visible delay on
+// exactly the weak devices this proxy targets. The pump reads ahead until
+// the stream queue is full and pull() resumes it, so memory stays bounded.
+// (A pull-only source cannot be used here: a pull that finds nothing to
+// enqueue yet — the common case while scanning for <head> — is not followed
+// by another pull in every engine.)
+function streamwithshims(body, shims) {
+  var reader = body.getReader();
+  var decoder = new TextDecoder("utf-8");
+  var encoder = new TextEncoder();
+  var injected = false;
+  var pending = "";
+  var paused = false;
+  var finished = false;
+
+  function process(controller, result) {
+    if (result.done) {
+      var tail = decoder.decode();
+      if (!injected) {
+        controller.enqueue(encoder.encode(shims + pending + tail));
+      } else if (tail) {
+        controller.enqueue(encoder.encode(tail));
+      }
+      controller.close();
+      finished = true;
+      return;
+    }
+
+    var text = decoder.decode(result.value, { stream: true });
+
+    if (!injected) {
+      pending += text;
+      var match =
+        /<head[^>]*>/i.exec(pending) || /<html[^>]*>/i.exec(pending);
+      if (match) {
+        var cut = match.index + match[0].length;
+        controller.enqueue(
+          encoder.encode(pending.slice(0, cut) + shims + pending.slice(cut)),
+        );
+        pending = "";
+        injected = true;
+      } else if (pending.length >= SHIM_SCAN_LIMIT) {
+        controller.enqueue(encoder.encode(shims + pending));
+        pending = "";
+        injected = true;
+      }
+    } else if (text) {
+      controller.enqueue(encoder.encode(text));
+    }
+  }
+
+  function pump(controller) {
+    if (finished || paused) return;
+    reader.read().then(
+      function (result) {
+        // The consumer may have cancelled while this read was in flight.
+        if (finished || paused) return;
+        try {
+          process(controller, result);
+        } catch (err) {
+          finished = true;
+          try {
+            controller.error(err);
+          } catch (_) {
+            /* already closed */
+          }
+          return;
+        }
+        if (finished || paused) return;
+        if (controller.desiredSize <= 0) {
+          paused = true;
+          return;
+        }
+        pump(controller);
+      },
+      function (err) {
+        if (finished) return;
+        finished = true;
+        try {
+          controller.error(err);
+        } catch (_) {
+          /* already closed */
+        }
+      },
+    );
+  }
+
+  return new ReadableStream({
+    start: function (controller) {
+      pump(controller);
+    },
+    pull: function (controller) {
+      if (paused) {
+        paused = false;
+        pump(controller);
+      }
+    },
+    cancel: function (reason) {
+      finished = true;
+      return reader.cancel(reason);
+    },
+  });
+}
+
+function injecthtmlshims(response, options) {
   if (!options) options = {};
   try {
     if (!response || !(response instanceof Response)) return response;
@@ -421,27 +605,14 @@ async function injecthtmlshims(response, options) {
       return response;
     var ct = (response.headers.get("content-type") || "").toLowerCase();
     if (ct.indexOf("text/html") === -1) return response;
-    var text = await response.text();
+
     var shims =
       cookieenabledshim +
       panicshim +
       (options.desktopua ? desktopuashim : "") +
       audiounlockshim +
-      adspoofshim;
-    var injected;
-    if (/<head[^>]*>/i.test(text)) {
-      injected = text.replace(/<head[^>]*>/i, function (m) {
-        return m + shims;
-      });
-    } else if (/<html[^>]*>/i.test(text)) {
-      // No <head>: inserting before the document would put scripts ahead of
-      // the doctype and could force quirks mode.
-      injected = text.replace(/<html[^>]*>/i, function (m) {
-        return m + shims;
-      });
-    } else {
-      injected = shims + text;
-    }
+      (adspoofinline || adspoofshim);
+
     var newheaders = new Headers(response.headers);
     newheaders.delete("content-length");
     // Override only the features the proxy needs; keep any policy the remote
@@ -461,7 +632,9 @@ async function injecthtmlshims(response, options) {
       });
     kept.push("autoplay=*", "fullscreen=*");
     newheaders.set("Permissions-Policy", kept.join(", "));
-    return new Response(injected, {
+
+    var body = response.body ? streamwithshims(response.body, shims) : shims;
+    return new Response(body, {
       status: response.status,
       statusText: response.statusText,
       headers: newheaders,
@@ -493,6 +666,19 @@ async function surfacerouteerror(response, request) {
 
     var text = await response.clone().text();
     if (text.indexOf(SW_ERROR_PREFIX) !== 0) return response;
+
+    // Expected during navigation: the search page replaces its iframe while
+    // the old page's background requests are still finishing, and the
+    // controller drops them with this exact message. Keep it out of the
+    // error stream.
+    if (text.indexOf("No frame found for request") !== -1) {
+      console.warn(
+        "[SW] dropped request from a closed frame:",
+        request.method,
+        request.url.slice(0, 200),
+      );
+      return response;
+    }
 
     console.error(
       "[SW] scramjet controller failed to handle a request —",
@@ -670,7 +856,21 @@ self.addEventListener("fetch", function (event) {
 
   if (shouldbypass(url)) return;
 
-  if (!scramjetloaded) {
+  if (!ensurecontrollerloaded()) {
+    if (proxied) {
+      // /~/sj/ URLs exist only as a scramjet prefix; letting them fall
+      // through to the origin would answer with our 404 page and look like a
+      // dead site. Send navigations to the recovery flow and fail the rest
+      // honestly (the route() failure path below does the same).
+      if (event.request.mode === "navigate") {
+        event.respondWith(Response.redirect("/recover", 302));
+      } else {
+        event.respondWith(
+          new Response("", { status: 503, statusText: "Proxy unavailable" }),
+        );
+      }
+      return;
+    }
     event.respondWith(
       fetch(event.request).catch(function () {
         if (event.request.mode === "navigate")

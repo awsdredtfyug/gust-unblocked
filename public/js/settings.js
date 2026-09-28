@@ -150,7 +150,10 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   // --- transport selector ---
-  // libcurl is faster but doesn't work on Apple devices
+  // Apple devices default to epoxy because libcurl's WASM build does not
+  // start there; everything else defaults to libcurl. scramjet-init.js uses
+  // the same rule and automatically falls back to the other transport when
+  // the preferred one fails, so this only picks which one is tried first.
   var ua = navigator.userAgent;
   var isapple =
     /iP(hone|ad|od)/.test(ua) ||

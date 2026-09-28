@@ -22,7 +22,7 @@
     <script src="register-sw.js?v=20260907.1" defer></script>
     <script src="/scramjet/scramjet.js" defer></script>
     <script src="/controller/controller.api.js" defer></script>
-    <script src="/js/scramjet-init.js?v=20260907.1"></script>
+    <script src="/js/scramjet-init.js?v=20260928.4"></script>
     <script defer src="./js/preload.js?v=20260907.1"></script>
 
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -392,16 +392,25 @@
           var p = await getproxy();
           var frameel = document.createElement("iframe");
           frameel.style.cssText = "width:100%;height:100%;border:0;";
+          // iPad Safari needs autoplay/fullscreen delegated to the frame or
+          // the proxied page cannot start audio or go fullscreen.
+          frameel.allow = "autoplay; fullscreen; encrypted-media";
           var frame = p.createFrame(frameel);
           contentarea.replaceChildren(frameel);
           try {
             await window.aetherisProxy.go(frame, url);
           } catch (error) {
             console.error("proxy navigation failed:", error);
+            try {
+              if (window.aetherisProxy) window.aetherisProxy.reset();
+            } catch (_) {}
             showproxyerror(contentarea, error);
           }
         } catch (err) {
           console.error("proxy load failed:", err);
+          try {
+            if (window.aetherisProxy) window.aetherisProxy.reset();
+          } catch (_) {}
           showproxyerror(contentarea, err);
         }
       }

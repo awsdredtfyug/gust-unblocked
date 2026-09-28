@@ -21,7 +21,7 @@
 
     <script src="/scramjet/scramjet.js" defer></script>
     <script src="/controller/controller.api.js" defer></script>
-    <script src="/js/scramjet-init.js?v=20260907.1"></script>
+    <script src="/js/scramjet-init.js?v=20260928.4"></script>
     <script src="register-sw.js?v=20260907.1" defer></script>
     <script defer src="./js/preload.js?v=20260907.1"></script>
 
@@ -279,7 +279,9 @@
       }
 
       async function startproxy() {
-        if (proxy) return proxy;
+        // Always ask the shared helper: it caches the controller and returns
+        // a fresh one after a reset. Caching here would pin a transport that
+        // died while the tab was suspended (iPad Safari) and break retries.
         await waitforaetherisproxy();
         proxy = await window.aetherisProxy.getController();
         return proxy;
@@ -310,7 +312,6 @@
         }
         var el = document.createElement("iframe");
         el.title = "Proxied website";
-        el.setAttribute("allowfullscreen", "");
         el.setAttribute("referrerpolicy", "no-referrer");
         el.setAttribute(
           "allow",
@@ -389,6 +390,12 @@
         } catch (err) {
           if (version !== navigationVersion) return;
           console.error("navigation error:", err);
+          // The next attempt should rebuild the transport — it may have died
+          // while the tab was suspended, which a retry through the same
+          // controller could never recover from.
+          try {
+            if (window.aetherisProxy) window.aetherisProxy.reset();
+          } catch (_) {}
           errorel.textContent =
             "failed to load: " +
             (err && err.message ? err.message : String(err));

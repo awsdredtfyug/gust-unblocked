@@ -33,6 +33,13 @@ function P(n){if(!n||!n.cmd)return;Q(n.cmd.display=n.cmd.display||[]);Q(n.cmd.pl
 var V=window.aiptag||null;Object.defineProperty(window,'aiptag',{get:function(){return V},set:function(n){V=n;P(n)},configurable:1});P(V)
 if(!window.aipPlayer)window.aipPlayer=function(n){this.startPreRoll=function(){if(n&&typeof n.AIP_COMPLETE=='function')setTimeout(function(){try{n.AIP_COMPLETE('empty')}catch(e){}},80)}}
 if(!window.aipDisplayTag)window.aipDisplayTag={display:n}
-window.adsbygoogle=window.adsbygoogle||[];window.adsbygoogle.push=function(){return 0}
+// Google ad libraries are only given passive, queue-shaped placeholders: if
+// the real GPT/AdSense script loads, it finds the standard `cmd`/`push`
+// arrays and initializes normally. Faking ready-made slots here (as this
+// file used to) makes page callbacks create stub slots before the real
+// library arrives, and the real GPT then throws on those foreign objects
+// ("enableSingleRequest is not a function", ...) — breaking ad-supported
+// sites while doing nothing for the game SDK spoofs above.
+window.adsbygoogle=window.adsbygoogle||[]
 window.googletag=window.googletag||{};window.googletag.cmd=window.googletag.cmd||[]
-if(!window.googletag.__spoofed){window.googletag.__spoofed=1;window.googletag.cmd.push=function(n){if(typeof n=='function')setTimeout(n,0)};window.googletag.pubads=function(){return{refresh:n,setTargeting:n,addEventListener:n}};window.googletag.display=n;window.googletag.defineSlot=function(){return{addService:function(){return this}}};window.googletag.enableServices=n}})()
+})()

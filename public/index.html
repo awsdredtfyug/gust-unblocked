@@ -104,7 +104,7 @@
     <link rel="stylesheet" href="./css/nav.css?v=20260907.4" />
     <link rel="stylesheet" href="./css/main.css?v=20260907.1" />
     <script src="register-sw.js?v=20260907.1" defer></script>
-    <script src="/js/scramjet-init.js?v=20260907.1"></script>
+    <script src="/js/scramjet-init.js?v=20260928.4"></script>
 
     <script>
       // Pre-warm the proxy controller so it's ready by the time the player
@@ -134,6 +134,17 @@
               });
           }
 
+          // On low-memory devices (most school Chromebooks report 4GB) skip
+          // building a whole transport here: that compiles the libcurl WASM
+          // and opens a Wisp socket the game creates again anyway. The
+          // bundles are still parsed and cached so the launch stays warm.
+          function warmlight() {
+            if (!window.aetherisProxy) return;
+            window.aetherisProxy.ensureLoaded().catch(function (err) {
+              console.error("[init] Scramjet bundle pre-warm failed:", err);
+            });
+          }
+
           if (
             Aetheris.storage.getItem("performanceMode") === "true" ||
             document.documentElement.classList.contains("power-saving")
@@ -143,9 +154,11 @@
           if (c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || "")))
             return;
 
+          var lowmem = navigator.deviceMemory && navigator.deviceMemory <= 4;
+          var run = lowmem ? warmlight : warm;
           if (typeof window.requestIdleCallback === "function")
-            window.requestIdleCallback(warm, { timeout: 5000 });
-          else setTimeout(warm, 2500);
+            window.requestIdleCallback(run, { timeout: 5000 });
+          else setTimeout(run, 2500);
         },
         { once: true },
       );
@@ -516,7 +529,6 @@
       <iframe
         id="mainframe"
         class="embed-frame"
-        allowfullscreen
         allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
         frameborder="0"
         referrerpolicy="no-referrer"

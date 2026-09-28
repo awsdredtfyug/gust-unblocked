@@ -332,6 +332,24 @@ test("image relay rejects missing and non-public targets", async () => {
   assert.equal((await api("/online-count")).status, 200);
 });
 
+test("served proxy bundles carry the legacy-Safari compat prefix", async () => {
+  const prefix = '(()=>{if(typeof Object.hasOwn!=="function")';
+
+  const core = await fetch(base + "/scramjet/scramjet.js");
+  assert.equal(core.status, 200);
+  assert.match(core.headers.get("content-type") || "", /javascript/);
+  const coretext = await core.text();
+  assert.ok(coretext.startsWith(prefix));
+  assert.match(coretext, /BroadcastChannel/);
+
+  const controller = await fetch(base + "/controller/controller.api.js");
+  assert.equal(controller.status, 200);
+  assert.match(controller.headers.get("content-type") || "", /javascript/);
+  const controllertext = await controller.text();
+  assert.ok(controllertext.startsWith(prefix));
+  assert.match(controllertext, /BroadcastChannel/);
+});
+
 test("lc-relay rejects cross-origin upgrades and accepts same-origin hosts", async () => {
   const wsBase = base.replace("http:", "ws:");
   await new Promise((resolve, reject) => {

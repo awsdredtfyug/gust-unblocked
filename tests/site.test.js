@@ -129,6 +129,205 @@ test("player accepts iframe-only catalog entries (igroutka)", () => {
   assert.match(source, /item\.url \|\| item\.html \|\| item\.iframe/);
 });
 
+// Loads the real service worker in a VM with just enough of the worker
+// global to evaluate its top-level code, so its string builders and helpers
+// can be exercised without a browser.
+function loadswRuntime(userAgent, adspoofSource) {
+  const source = fs.readFileSync(
+    new URL("../public/sw.js", import.meta.url),
+    "utf8",
+  );
+  const context = {
+    console: { log() {}, warn() {}, error() {} },
+    navigator: { userAgent },
+    self: {
+      location: {
+        origin: "https://aetheris.test",
+        hostname: "aetheris.test",
+      },
+      addEventListener() {},
+      skipWaiting() {},
+      clients: { claim() {} },
+    },
+    caches: {
+      open: () =>
+        Promise.resolve({
+          match: () => Promise.resolve(null),
+          put: () => Promise.resolve(),
+        }),
+    },
+    importScripts() {},
+    fetch: () =>
+      Promise.resolve({
+        ok: Boolean(adspoofSource),
+        text: () => Promise.resolve(adspoofSource || ""),
+      }),
+    setTimeout,
+    clearTimeout,
+    Headers,
+    Response,
+    URL,
+    ReadableStream,
+    TextDecoder,
+    TextEncoder,
+  };
+  context.window = context;
+  vm.runInNewContext(source, context);
+  return context;
+}
+
+test("desktop UA spoof follows the real Chrome major and keeps hints consistent", async () => {
+  const chromium = loadswRuntime(
+    "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+  );
+  assert.equal(chromium.spoofchromemajor, "154");
+  assert.match(chromium.desktopua, /Chrome\/154\.0\.0\.0/);
+  assert.match(chromium.spoofuach, /"Google Chrome";v="154"/);
+
+  // Safari/iPad borrows no Chrome version, so the fallback must be a modern
+  // one and must be identical in the header value and the injected shim.
+  const safari = loadswRuntime(
+    "Mozilla/5.0 (iPad; CPU OS 15_3 like Mac OS X) AppleWebKit/605.1.15 " +
+      "(KHTML, like Gecko) Version/15.3 Mobile/15E148 Safari/604.1",
+  );
+  const fallback = Number(safari.spoofchromemajor);
+  assert.ok(
+    Number.isInteger(fallback) && fallback >= 130,
+    "fallback Chrome major should stay recent",
+  );
+  assert.match(safari.desktopua, new RegExp("Chrome/" + fallback + "\\.0\\.0\\.0"));
+  assert.match(
+    safari.spoofuachfull,
+    new RegExp('"Google Chrome";v="' + fallback + '\\.0\\.0\\.0"'),
+  );
+
+  function runshim(sw) {
+    const body = sw.desktopuashim
+      .replace(/^<script>/, "")
+      .replace(/<\/script>$/, "");
+    function Navigator() {}
+    const nav = Object.create(Navigator.prototype);
+    vm.runInNewContext(body, {
+      window: {},
+      navigator: nav,
+      Navigator,
+      console: { log() {}, warn() {}, error() {} },
+    });
+    return nav;
+  }
+
+  const nav = runshim(safari);
+  assert.match(nav.userAgent, new RegExp("Chrome/" + fallback + "\\.0\\.0\\.0"));
+  assert.equal(nav.userAgentData.brands[1].brand, "Google Chrome");
+  assert.equal(nav.userAgentData.brands[1].version, String(fallback));
+  const hints = await nav.userAgentData.getHighEntropyValues(["uaFullVersion"]);
+  assert.equal(hints.uaFullVersion, fallback + ".0.0.0");
+});
+
+test("html shim injection streams and inserts at the same point", async () => {
+  const adspoofSource = "(function(){window.__adSpoofInstalled=true})();";
+  const sw = loadswRuntime(
+    "Mozilla/5.0 (iPad; CPU OS 15_3 like Mac OS X) Safari/604.1",
+    adspoofSource,
+  );
+
+  function html(body, extraHeaders) {
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        ...extraHeaders,
+      },
+    });
+  }
+
+  // Head found in the first chunk: shims go directly after <head>, the body
+  // is streamed, and the stale length header is dropped.
+  let res = sw.injecthtmlshims(
+    html(
+      "<!doctype html><html><head><title>x</title></head><body>hi</body></html>",
+      { "Content-Length": "1000" },
+    ),
+    {},
+  );
+  let out = await res.text();
+  assert.equal(
+    out.indexOf("<script>"),
+    out.indexOf("<head>") + "<head>".length,
+  );
+  assert.ok(out.includes("__aetherisCookieEnabledShimInstalled"));
+  assert.ok(out.includes("__aetherisPanicInstalled"));
+  assert.ok(out.includes("/js/ad-spoof.js"));
+  assert.ok(out.endsWith("</body></html>"));
+  assert.equal(res.headers.get("content-length"), null);
+
+  // The insertion tag may be split across stream chunks.
+  const chunks = ["<!doctype html><ht", "ml><bo", "dy>hi</body></html>"];
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks)
+        controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  });
+  res = sw.injecthtmlshims(
+    new Response(stream, {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    }),
+    {},
+  );
+  out = await res.text();
+  assert.equal(
+    out.indexOf("<script>"),
+    out.indexOf("<html>") + "<html>".length,
+  );
+
+  // No <head>/<html> anywhere: shims first, matching the old fallback.
+  res = sw.injecthtmlshims(html("just text"), {});
+  out = await res.text();
+  assert.ok(out.startsWith("<script>"));
+  assert.ok(out.endsWith("just text"));
+
+  // Non-HTML and non-200 responses are passed through untouched.
+  const json = new Response("{}", {
+    headers: { "Content-Type": "application/json" },
+  });
+  assert.equal(sw.injecthtmlshims(json, {}), json);
+  const error = new Response("<html></html>", {
+    status: 500,
+    headers: { "Content-Type": "text/html" },
+  });
+  assert.equal(sw.injecthtmlshims(error, {}), error);
+
+  // Desktop-UA mode adds the spoof shim; plain mode does not.
+  res = sw.injecthtmlshims(
+    html("<html><head></head><body></body></html>"),
+    { desktopua: true },
+  );
+  out = await res.text();
+  assert.ok(out.includes("__aetherisDesktopUASpoofInstalled"));
+  res = sw.injecthtmlshims(
+    html("<html><head></head><body></body></html>"),
+    {},
+  );
+  out = await res.text();
+  assert.ok(!out.includes("__aetherisDesktopUASpoofInstalled"));
+
+  // Once the ad-spoof source has warmed it is inlined instead of loaded from
+  // /js/ad-spoof.js, so proxied pages have no local <script src> to trip
+  // scramjet's URL getters over.
+  await new Promise((resolve) => setImmediate(resolve));
+  res = sw.injecthtmlshims(
+    html("<html><head></head><body></body></html>"),
+    {},
+  );
+  out = await res.text();
+  assert.ok(out.includes("__adSpoofInstalled"));
+  assert.ok(!out.includes("/js/ad-spoof.js"));
+});
+
 test("navigation fallback is absolute and modified clicks are left to the browser", () => {
   const listeners = {};
   const location = {

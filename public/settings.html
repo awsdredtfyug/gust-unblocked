@@ -19,7 +19,7 @@
 
     <script src="register-sw.js?v=20260907.1" defer></script>
     <script defer src="./js/preload.js?v=20260907.1"></script>
-    <script defer src="./js/settings.js?v=20260907.1"></script>
+    <script defer src="./js/settings.js?v=20260928.2"></script>
     <script defer src="./js/data-transfer.js?v=20260907.1"></script>
     <script defer src="./js/cache-reset.js?v=20260924.1"></script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -295,7 +295,7 @@
               <span class="theme-label">libcurl</span>
               <span
                 class="transport-tip"
-                data-tip="Cross-browser compatible. Best for Firefox. Reliable on all platforms."
+                data-tip="Generally the fastest, and the default on Windows, Linux, ChromeOS and Firefox. If it can't start, epoxy is used automatically."
                 onclick="event.stopPropagation()"
                 >?</span
               >
@@ -304,8 +304,8 @@
               class="theme-swatch"
               style="background: linear-gradient(135deg, #0ea5e9, #0369a1)"
             ></span>
-            <span class="transport-sub">Cross Browser / Secure</span>
-            <span class="transport-compat">Firefox</span>
+            <span class="transport-sub">Default / Secure</span>
+            <span class="transport-compat">Most devices</span>
           </button>
           <button
             class="theme-card transport-card"
@@ -317,7 +317,7 @@
               <span class="theme-label">epoxy</span>
               <span
                 class="transport-tip"
-                data-tip="Faster than libcurl on Chromium and Apple devices. Uses native TLS via WebAssembly."
+                data-tip="Most compatible, and required on Apple devices. Used automatically as a fallback when libcurl can't start."
                 onclick="event.stopPropagation()"
                 >?</span
               >
@@ -326,8 +326,8 @@
               class="theme-swatch"
               style="background: linear-gradient(135deg, #10b981, #065f46)"
             ></span>
-            <span class="transport-sub">Fastest / Secure</span>
-            <span class="transport-compat">Chromium or Apple</span>
+            <span class="transport-sub">Compatibility / Secure</span>
+            <span class="transport-compat">Apple / fallback</span>
           </button>
         </div>
         <div

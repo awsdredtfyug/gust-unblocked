@@ -1967,6 +1967,27 @@ fastify.get("/epoxy/index.mjs", (_req, reply) => {
 // any original integrity hash can never validate again regardless — so
 // match the nonce/csp rule's approach and remove the attribute entirely
 // instead of leaving an empty one behind.
+// scramjet 2.0.67-alpha.2 relies on two APIs that Safari only shipped in
+// 15.4: Object.hasOwn (its HTML parser calls it for every parsed document)
+// and BroadcastChannel (the controller constructs one unconditionally for
+// cross-tab cookie sync, and the client walks BroadcastChannel.prototype
+// while installing its event hooks). On iPadOS 14.1–15.3 the rest of the
+// bundle (class fields, optional chaining) runs fine, so prepend
+// feature-detected shims to the served bundles instead of refusing to boot;
+// both checks are no-ops on every newer browser.
+const legacybrowsercompat =
+  "(()=>{" +
+  'if(typeof Object.hasOwn!=="function"){' +
+  'Object.defineProperty(Object,"hasOwn",{value:function(o,p){return Object.prototype.hasOwnProperty.call(o,p)},writable:true,configurable:true})}' +
+  'if(typeof BroadcastChannel==="undefined"){' +
+  "var B=function(){};" +
+  "B.prototype.postMessage=function(){};" +
+  "B.prototype.close=function(){};" +
+  "B.prototype.addEventListener=function(){};" +
+  "B.prototype.removeEventListener=function(){};" +
+  "globalThis.BroadcastChannel=B}" +
+  "})();\n";
+
 let patchedscramjetcore = null;
 fastify.get("/scramjet/scramjet.js", (_req, reply) => {
   if (!patchedscramjetcore) {
@@ -2046,9 +2067,75 @@ fastify.get("/scramjet/scramjet.js", (_req, reply) => {
       );
     }
 
-    patchedscramjetcore = raw;
+    // Blob/data URL requests can arrive with the URL percent-encoded in the
+    // path (blob%3Ahttps%3A%2F%2F...), because that form is what the default
+    // codec produces for a normal URL rewrite. handleFetch's blob/data
+    // branch then tests the raw pathname for a literal "blob:" prefix,
+    // misses, and falls into fetchDataUrl() with a relative string — which
+    // resolves against our own origin and answers 404. Bing and GitHub both
+    // trip this on blob module workers (observed as /blob%3A... 404s and
+    // "No frame found for request" noise). Decode the encoded cases before
+    // the branch; literal blob:/data: paths are left untouched.
+    const blobdatabroken =
+      'c=t.rawUrl.pathname.substring(e.context.prefix.pathname.length);c.startsWith("blob:")?(';
+    if (!raw.includes(blobdatabroken)) {
+      console.warn(
+        "[scramjet-patch] expected minified blob/data path pattern not found — shipping that part unpatched (did the alpha version change?)",
+      );
+    } else {
+      raw = raw.replace(
+        blobdatabroken,
+        'c=t.rawUrl.pathname.substring(e.context.prefix.pathname.length);if(/^(blob|data)%3a/i.test(c))try{c=decodeURIComponent(c)}catch(_){}c.startsWith("blob:")?(',
+      );
+    }
+
+    patchedscramjetcore = legacybrowsercompat + raw;
   }
   reply.type("application/javascript").send(patchedscramjetcore);
+});
+
+// The controller bundle constructs its BroadcastChannel immediately (see the
+// compat note above), so it gets the same prefix. It also gets one behaviour
+// patch: when a frame is torn down (search.html replaces its iframe while the
+// old page's analytics/keepalive requests are still in flight), the
+// controller's request handler logs a full stack trace for every such request
+// — "No frame found for request" is expected there, not a bug. Suppress just
+// that message; every other controller error still logs normally.
+let patchedcontrollerapi = null;
+fastify.get("/controller/controller.api.js", (_req, reply) => {
+  if (!patchedcontrollerapi) {
+    let raw = readFileSync(
+      join(scramjetControllerPath, "controller.api.js"),
+      "utf8",
+    );
+    const framelogbroken =
+      't.suppressError||console.error("Error in controller request handler:",o)';
+    if (!raw.includes(framelogbroken)) {
+      console.warn(
+        "[scramjet-patch] expected minified controller error-log pattern not found — shipping that part unpatched (did the controller version change?)",
+      );
+    } else {
+      raw = raw.replace(
+        framelogbroken,
+        't.suppressError||/No frame found/.test((o&&o.message)||"")||console.error("Error in controller request handler:",o)',
+      );
+    }
+    // The RPC layer logs every rejected method call itself, so the same
+    // teardown race surfaces here even with the log above guarded.
+    const rpclogbroken = ".catch(e=>{console.error(e),this.sendRaw(";
+    if (!raw.includes(rpclogbroken)) {
+      console.warn(
+        "[scramjet-patch] expected minified controller RPC log pattern not found — shipping that part unpatched (did the controller version change?)",
+      );
+    } else {
+      raw = raw.replace(
+        rpclogbroken,
+        '.catch(e=>{(e&&e.message==="No frame found for request")||console.error(e),this.sendRaw(',
+      );
+    }
+    patchedcontrollerapi = legacybrowsercompat + raw;
+  }
+  reply.type("application/javascript").send(patchedcontrollerapi);
 });
 
 // controller.sw.js used to be patched here to buffer the request body before

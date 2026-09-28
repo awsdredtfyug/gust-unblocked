@@ -73,6 +73,12 @@
           location.reload();
           return;
         }
+        // Rebuild the proxy transport before retrying: the previous failure
+        // may have been a dead transport (backgrounded iPad, flaky school
+        // wifi) rather than anything wrong with the game.
+        try {
+          if (window.aetherisProxy) window.aetherisProxy.reset();
+        } catch (_) {}
         started = false;
         boot();
       });
@@ -162,8 +168,6 @@
   }
 
   async function startproxy() {
-    if (proxy) return;
-
     if (!window.aetherisProxy) {
       await new Promise(function (resolve, reject) {
         var waited = 0;
@@ -180,6 +184,10 @@
       });
     }
 
+    // Don't cache the controller here: aetherisProxy.getController() already
+    // caches it and, after a reset (failed transport, suspended iPad tab),
+    // hands back a fresh one. A local cache would pin a dead transport and
+    // make "Try again" fail the same way forever.
     proxy = await window.aetherisProxy.getController();
     syncuaspoof();
   }
@@ -223,7 +231,6 @@
       await startproxy();
       var frameel = document.createElement("iframe");
       frameel.title = item.title || item.name || "Game";
-      frameel.allowFullscreen = true;
       frameel.allow =
         "autoplay; fullscreen; encrypted-media; picture-in-picture";
       frameel.style.cssText = "width:100%;height:100%;border:0;";
@@ -236,7 +243,6 @@
       setTimeout(hideLoading, 3000);
     } else {
       var frame = document.createElement("iframe");
-      frame.allowFullscreen = true;
       frame.title = item.title || item.name || "Game";
       frame.referrerPolicy = "no-referrer";
       frame.style.cssText = "width:100%;height:100%;border:0;";
