@@ -9,6 +9,25 @@ const MAX_REDIRECTS = 5;
 const PROXY_ROUTE = "/movie-proxy";
 const MAX_TEXT_BYTES = 16 * 1024 * 1024;
 
+// Fail-closed policy for relayed provider documents: scripts and network
+// calls may only reach the relay itself. Images are the one exception that
+// must stay reachable directly — players assign poster/backdrop artwork
+// through CSS or JS strings that the URL hooks cannot see, and TMDB art is
+// the common case on 2Embed/vidsrc pages. Everything else keeps provider
+// traffic on the relay.
+const RELAY_CSP =
+  "default-src 'self' data: blob:; " +
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "connect-src 'self' blob:; " +
+  "img-src 'self' data: blob: https://flagcdn.com https://image.tmdb.org; " +
+  "media-src 'self' data: blob:; " +
+  "font-src 'self' data:; " +
+  "frame-src 'self' blob:; " +
+  "worker-src 'self' blob:; " +
+  "form-action 'self'; " +
+  "base-uri https:";
+
 const BLOCKED_DOMAINS = new Set([
   "adexchangerapid.com",
   "usrpubtrk.com",
@@ -109,6 +128,14 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
   );
   cleaned = cleaned.replace(/"autoStart"\s*:\s*false/g, '"autoStart":true');
 
+  // Obsolete Feature-Policy metas are ignored by current browsers but make
+  // Firefox log "Skipping unsupported feature name" for every iframe load.
+  // Their replacements (Permissions-Policy) are set by the app itself.
+  cleaned = cleaned.replace(
+    /<meta[^>]*\bhttp-equiv\s*=\s*(["']?)feature-policy\1[^>]*>/gi,
+    "",
+  );
+
   // The provider's own URL resolution must survive relaying. Pages such as
   // Videm's player ship `<base href="/">`, and relative API calls
   // (`fetch('api.php?a=race...')`), track URLs, workers, and beacons all
@@ -167,16 +194,35 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
       // Use an absolute URL because some players prepend their own CDN base
       // to iframe attributes. A root-relative proxy path can otherwise become
       // https://provider.example/e//movie-proxy?... and bypass this relay.
-      let proxied = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
-      // Self-hosted JWPlayer ("unlimited" key, as used by 2Embed's swish
-      // player) locates its base path by scanning script `.src` URLs for a
-      // literal `/jwplayer.js`. Proxied URLs percent-encode the upstream
-      // path, so the lookup fails and setup throws "Could not locate
-      // jwplayer.js script tag" (seen via the error beacon). A fragment
-      // restores the literal without changing the request (fragments are
-      // never sent to the server).
-      if (/\/jwplayer\.js$/i.test(new URL(abs).pathname))
-        proxied += "#/jwplayer.js";
+      let proxied;
+      const parsed = new URL(abs);
+      if (/\/jwplayer\.js$/i.test(parsed.pathname)) {
+        // Self-hosted JWPlayer ("unlimited" key, as used by 2Embed's swish
+        // player) finds its base path with
+        //   src.substr(0, src.lastIndexOf("/jwplayer.js") + 1)
+        // and then loads sibling chunks/plugins (provider.hlsjs.js?v=42,
+        // vast.js?v=32, ...) from that base. A plain proxied URL
+        // percent-encodes the upstream path, so the literal "/jwplayer.js"
+        // the lookup needs is absent and setup throws "Could not locate
+        // jwplayer.js script tag". A `#/jwplayer.js` fragment satisfied the
+        // lookup but produced
+        //   .../movie-proxy?url=...jwplayer.js%3Fv%3D7&referer=...#/
+        // as the base, so every chunk request went back to the jwplayer.js
+        // proxy URL (ChunkLoadError) and the player never started. Keep the
+        // upstream directory percent-encoded and append a literal
+        // /jwplayer.js: JW then derives
+        //   .../movie-proxy?url=<encoded dir>/jwplayer.js?v=7
+        // for the library itself and
+        //   .../movie-proxy?url=<encoded dir>/provider.hlsjs.js?v=42
+        // for siblings, both of which the relay resolves to the right
+        // upstream files.
+        const directory =
+          parsed.origin +
+          parsed.pathname.slice(0, parsed.pathname.lastIndexOf("/"));
+        proxied = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent(directory)}/jwplayer.js${parsed.search}&referer=${encodeURIComponent(href)}`;
+      } else {
+        proxied = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
+      }
       return `${attr}=${quote}${proxied}${quote}`;
     } catch {
       return match;
@@ -214,9 +260,9 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
   // identifiers are encoded in transit). No surgery is needed either: the
   // player listens for its own errors and switches hls4 (currently a
   // storyboard-only master) to hls3 (verified video) itself. The only
-  // server-side piece it needs is the JWPlayer fragment above.
+  // server-side piece it needs is the JWPlayer base rewrite above.
 
-  const scriptTag = `<script>window.__MOVIE_PROXY_TARGET__=${JSON.stringify(href).replace(/</g, "\\u003c")};window.__MOVIE_PROXY_ORIGIN__=${JSON.stringify(origin).replace(/</g, "\\u003c")};</script><script src="/js/movie-proxy-client.js?v=20260908.1"></script>`;
+  const scriptTag = `<script>window.__MOVIE_PROXY_TARGET__=${JSON.stringify(href).replace(/</g, "\\u003c")};window.__MOVIE_PROXY_ORIGIN__=${JSON.stringify(origin).replace(/</g, "\\u003c")};</script><script src="/js/movie-proxy-client.js?v=20260928.1"></script>`;
 
   // Some provider players (2vcdn.skin's packed boot) call jQuery (`$`)
   // at top level without loading it. The resulting ReferenceError aborts
@@ -247,6 +293,13 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
   } else {
     cleaned = scriptTag + "\n" + jqueryTag + "\n" + cleaned;
   }
+
+  // Provider pages frequently omit a doctype (2vcdn.skin's player starts
+  // with <HTML>), which puts the proxied iframe in quirks mode and makes the
+  // browser log a warning while layout and measurements differ from the
+  // provider's intent. Prepending a standards-mode doctype is last so it
+  // stays the very first thing in the document.
+  if (!/^\s*<!doctype/i.test(cleaned)) cleaned = `<!DOCTYPE html>\n${cleaned}`;
 
   return cleaned;
 }
@@ -859,10 +912,7 @@ export function registerMovieRelay(
         // Rewriting handles normal and dynamically assigned provider URLs.
         // CSP is the fail-closed boundary: if an unusual browser API escapes
         // those hooks, it may contact only this relay origin, never upstream.
-        reply.header(
-          "Content-Security-Policy",
-          "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob:; img-src 'self' data: blob: https://flagcdn.com; media-src 'self' data: blob:; font-src 'self' data:; frame-src 'self' blob:; worker-src 'self' blob:; form-action 'self'; base-uri https:",
-        );
+        reply.header("Content-Security-Policy", RELAY_CSP);
         reply.header("content-length", Buffer.byteLength(rewritten));
         reply.send(rewritten);
       } else if (isHtml) {
@@ -871,10 +921,7 @@ export function registerMovieRelay(
         // octet-stream which would trigger a browser download.
         reply.type("text/html; charset=utf-8");
         reply.raw.setHeader("Content-Type", "text/html; charset=utf-8");
-        reply.header(
-          "Content-Security-Policy",
-          "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob:; img-src 'self' data: blob: https://flagcdn.com; media-src 'self' data: blob:; font-src 'self' data:; frame-src 'self' blob:; worker-src 'self' blob:; form-action 'self'; base-uri https:",
-        );
+        reply.header("Content-Security-Policy", RELAY_CSP);
         reply.header("content-length", Buffer.byteLength(rawBody));
         reply.send(rawBody);
       } else if (isM3u8 || sniffM3u8) {

@@ -99,6 +99,23 @@ These were observed on 2026-09-03 and must be rechecked because providers change
   2Embed remains selectable for recovery checks.
 - A prior attempted movie fix was fully reverted. Commits `3cf60bbe` through
   `8cfd2243` document that rollback; do not reintroduce that design.
+- **2026-09-28 — 2Embed boot errors fixed; upstream media blocks remain.**
+  2Embed now wraps a swish/2vcdn.skin player (server 1) or a vidsrc.buzz
+  player (other servers). Four relay/client defects were fixed: (1) the
+  JWPlayer base rewrite no longer appends a `#/jwplayer.js` fragment (JW
+  derives its webpack base with `src.slice(0, src.lastIndexOf("/jwplayer.js")+1)`;
+  the fragment made every chunk request hit the jwplayer.js proxy URL, so
+  `provider.hlsjs.js`/`vast.js` 404'd and setup failed with Error 104153);
+  the relay now appends a literal `/jwplayer.js` after the percent-encoded
+  upstream directory; (2) the relay client re-anchors same-origin URLs that
+  provider JS builds from `script.src`/`document.baseURI` onto the upstream
+  origin (fixes `/player/jw8/vast.js` being fetched from aetheris.win);
+  (3) the relay CSP allows `image.tmdb.org` for poster/backdrop artwork that
+  players set via CSS or JS strings the URL hooks cannot see; (4) doctype
+  injection removes quirks mode on pages like 2vcdn.skin. Still blocked by
+  the VPS egress (not code-fixable): `tagivi.com` Cloudflare 403,
+  `unfortunatelyejectinflected.com` 403, `relay3.videm.xyz` 429 bursts,
+  some signed segment URLs 404. VidSrc.to remains the default fallback.
 
 ## Production access
 

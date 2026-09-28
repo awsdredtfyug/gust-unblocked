@@ -18,14 +18,14 @@ var MOVIES_SOURCES = [
     },
   },
   {
-    // NOTE (2026-09-08): all three 2Embed servers currently fail through
-    // the VPS — Videm segments `403` on VNE (ByteDance ImageX `domain
-    // forbidden`, IPv4; no IPv6 route) and `Expired` on VEM-4 (its `x`
-    // timestamp is ~6 days stale at issue), Cnby's `cineby.hair` is `404`
-    // dead, Vcr's `vidcore` answers Cloudflare "blocked" to the VPS IP.
-    // Kept proxied per user preference; use VidSrc.to for playback until
-    // a 2Embed server recovers VPS access (verified recheck: rerun the
-    // Videm signed chain from the VPS and watch for non-403 segments).
+    // NOTE (2026-09-28): 2Embed's first server wraps a swish/2vcdn.skin
+    // player and the others a vidsrc.buzz player; both boot through the
+    // relay now that the JWPlayer base rewrite works (previous fragment
+    // broke chunk loading). Individual titles can still fail when a media
+    // CDN rejects the VPS egress (tagivi.com and unfortunatelyejectinflected
+    // answer 403 to the datacenter IP, relay3.videm.xyz rate-limits with
+    // 429), so keep VidSrc.to as the reliable fallback. Kept proxied per
+    // user preference.
     name: "2Embed (2embed.cc)",
     url: function (t, id, s, e) {
       // 2Embed's TV endpoint expects its parameters after a

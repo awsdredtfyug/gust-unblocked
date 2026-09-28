@@ -175,8 +175,15 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
       assert.ok(csp.includes("media-src 'self'"));
       assert.ok(csp.includes("frame-src 'self'"));
       assert.ok(
-        !csp.includes("https: *"),
-        "relayed documents must fail closed instead of allowing direct upstream traffic",
+        csp.includes(
+          "img-src 'self' data: blob: https://flagcdn.com https://image.tmdb.org;",
+        ),
+        "TMDB artwork loads directly because players set it via CSS/JS strings the URL hooks cannot see",
+      );
+      assert.ok(
+        !/script-src[^;]*https:/i.test(csp) &&
+          !/connect-src[^;]*https:/i.test(csp),
+        "relayed documents must keep scripts and network calls on the relay",
       );
     },
   );
@@ -237,17 +244,51 @@ test("movie relay handles real HTTP bodies, ranges and redirect validation", asy
 
 test("rewriteHtml keeps self-hosted JWPlayer locatable", async (t) => {
   const target = new URL("https://2vcdn.skin/e/1e2f5rfkmjtj");
-  await t.test("jwplayer script keeps a literal /jwplayer.js match", () => {
+  await t.test("jwplayer script keeps a usable upstream base for chunks", () => {
     const out = rewriteHtml(
       '<!doctype html><html><head></head><body><script src="/player/jw8/jwplayer.js?v=7"></script></body></html>',
       target,
       "http://localhost",
     );
-    // JWPlayer finds its base by scanning script `.src` for `/jwplayer.js`;
-    // the proxied URL percent-encodes the path, so a fragment restores it.
-    assert.ok(out.includes("#/jwplayer.js"));
     const src = out.match(/<script[^>]*src="([^"]*movie-proxy\?url=[^"]*)"/)[1];
-    assert.ok(new URL(src, "http://localhost").pathname === "/movie-proxy");
+    // JW Player derives its webpack base with
+    // src.substr(0, src.lastIndexOf("/jwplayer.js") + 1). A plain proxied
+    // URL percent-encodes the upstream directory, so the relay appends a
+    // literal /jwplayer.js after the encoded directory instead. No fragment:
+    // the old `#/jwplayer.js` trick made the base end in `#/`, so every
+    // chunk request came back to the jwplayer.js proxy URL.
+    assert.ok(!src.includes("#/jwplayer.js"));
+    const index = src.lastIndexOf("/jwplayer.js");
+    assert.ok(index >= 0, "JW needs a literal /jwplayer.js in the script src");
+    const base = src.slice(0, index + 1);
+    for (const sibling of ["provider.hlsjs.js?v=42", "vast.js?v=32"]) {
+      const siblingUrl = new URL(base + sibling, "http://localhost");
+      assert.equal(siblingUrl.pathname, "/movie-proxy");
+      assert.equal(
+        siblingUrl.searchParams.get("url"),
+        `https://2vcdn.skin/player/jw8/${sibling}`,
+      );
+    }
+    const libraryUrl = new URL(src, "http://localhost");
+    assert.equal(
+      libraryUrl.searchParams.get("url"),
+      "https://2vcdn.skin/player/jw8/jwplayer.js?v=7",
+    );
+  });
+  await t.test("pages without a doctype get standards mode", () => {
+    const out = rewriteHtml(
+      '<HTML><HEAD><meta http-equiv="Feature-Policy" content="autoplay *; encrypted-media *"></HEAD><BODY><img src="/images/a.png"></BODY></HTML>',
+      target,
+      "http://localhost",
+    );
+    assert.ok(
+      /^<!DOCTYPE html>/i.test(out),
+      "quirks mode breaks provider layout and spams the console",
+    );
+    assert.ok(
+      !/Feature-Policy/i.test(out),
+      "obsolete feature policy metas are ignored anyway; strip them",
+    );
   });
   await t.test(
     "jQuery is injected only when the page calls $ without it",

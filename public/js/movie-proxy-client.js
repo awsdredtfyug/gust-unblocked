@@ -64,7 +64,7 @@
     } catch (e) {}
     var pingImg = new Image();
     pingImg.src =
-      "/movie-ping?v=20260907.9&origin=" +
+      "/movie-ping?v=20260928.1&origin=" +
       encodeURIComponent(targetOrigin || "none") +
       "&sample=" +
       encodeURIComponent(pingSample);
@@ -80,7 +80,7 @@
       try {
         var img = new Image();
         img.src =
-          "/movie-ping?v=20260907.9&origin=" +
+          "/movie-ping?v=20260928.1&origin=" +
           encodeURIComponent(targetOrigin || "none") +
           "&err=" +
           encodeURIComponent(String(msg).slice(0, 300));
@@ -180,6 +180,24 @@
 
     try {
       var absUrl = new URL(trimmed, resolveBase()).href;
+      // Provider code often resolves relative URLs against whatever base it
+      // holds: `new URL("vast.js", script.src)` on a proxied script, or
+      // `new URL("/player/jw8/vast.js", document.baseURI)`. Both collapse
+      // the path onto our origin (for example
+      // https://aetheris.win/player/jw8/vast.js) instead of the provider's,
+      // so the relay ends up fetching its own 404. Re-anchor any non-relay
+      // same-origin URL onto the upstream origin; paths that belong to the
+      // relay itself were already returned untouched above.
+      if (targetOrigin && targetOrigin !== location.origin) {
+        var parsedAbs = new URL(absUrl);
+        if (parsedAbs.origin === location.origin) {
+          absUrl =
+            targetOrigin +
+            parsedAbs.pathname +
+            parsedAbs.search +
+            parsedAbs.hash;
+        }
+      }
       var r = ref || targetUrl;
       var out =
         location.origin +
