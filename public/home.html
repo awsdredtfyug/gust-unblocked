@@ -22,7 +22,6 @@
 
     <script src="register-sw.js?v=20260907.1" defer></script>
     <script defer src="./js/preload.js?v=20260907.1"></script>
-    <script defer src="./js/backup.js?v=20260915.1"></script>
     <script src="./js/dm-shared.js?v=20260907.1"></script>
 
     <script src="./js/theme.js?v=20260907.1"></script>
@@ -76,72 +75,21 @@
       <div class="update-modal">
         <h2 id="updatemodaltitle">whats new</h2>
         <ul class="update-list">
+          <li>
+            big speed pass: games show up instantly, catalogs load on demand
+            and covers are ~95% smaller
+          </li>
+          <li>
+            a small world cup is back, 8 ball classic and bowmasters are fixed
+          </li>
+          <li>
+            removed dashmetry, blackjack, beach boxing sim and thats not my
+            neighbor
+          </li>
           <li>we are better than johnny games</li>
-          <li>most games are fixed</li>
         </ul>
         <div class="update-modal-footer">
           <button id="updatemodalclose">aight</button>
-        </div>
-      </div>
-    </div>
-
-    <div
-      id="backupmodal"
-      class="update-modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="backupmodaltitle"
-      style="z-index: 20000"
-    >
-      <div class="update-modal">
-        <h2 id="backupmodaltitle">backup now</h2>
-        <p>site goes down or gets blocked? your game data is gone.</p>
-        <div
-          style="
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin-bottom: 1rem;
-          "
-        >
-          <button id="backupdownload">download backup</button>
-          <button id="backupdrive">save to google drive</button>
-          <button id="backuprestore">restore backup...</button>
-          <input
-            id="backupfile"
-            type="file"
-            accept="application/json,.json"
-            style="display: none"
-          />
-        </div>
-        <div
-          style="
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-            padding-top: 10px;
-            margin-bottom: 1rem;
-          "
-        >
-          <p style="margin-bottom: 8px">lost your links? grab them here.</p>
-          <a
-            id="backuplinksdoc"
-            href="https://docs.google.com/document/d/1z5KIqm8KPfS-ghA2L14XwcoRG0IOOCfNMGj_JgO8-kU/edit?usp=sharing"
-            target="_blank"
-            rel="noopener noreferrer"
-            style="
-              display: block;
-              text-align: center;
-              text-decoration: none;
-              border-radius: 999px;
-              padding: 0.45rem 1rem;
-              font-size: 0.9rem;
-              background: rgba(255, 255, 255, 0.12);
-              color: white;
-            "
-            >links doc</a
-          >
-        </div>
-        <div class="update-modal-footer">
-          <button id="backupmodalclose">aight</button>
         </div>
       </div>
     </div>
@@ -477,7 +425,7 @@
     </style>
 
     <script>
-      var UPDATE_VERSION = "12";
+      var UPDATE_VERSION = "13";
 
       async function loadquote() {
         try {
