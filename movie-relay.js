@@ -343,7 +343,7 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
   // storyboard-only master) to hls3 (verified video) itself. The only
   // server-side piece it needs is the JWPlayer base rewrite above.
 
-  const scriptTag = `<script>window.__MOVIE_PROXY_TARGET__=${JSON.stringify(href).replace(/</g, "\\u003c")};window.__MOVIE_PROXY_ORIGIN__=${JSON.stringify(origin).replace(/</g, "\\u003c")};</script><script src="/js/movie-proxy-client.js?v=20260929.10"></script>`;
+  const scriptTag = `<script>window.__MOVIE_PROXY_TARGET__=${JSON.stringify(href).replace(/</g, "\\u003c")};window.__MOVIE_PROXY_ORIGIN__=${JSON.stringify(origin).replace(/</g, "\\u003c")};</script><script src="/js/movie-proxy-client.js?v=20260929.11"></script>`;
 
   // Some provider players (2vcdn.skin's packed boot) call jQuery (`$`)
   // at top level without loading it. The resulting ReferenceError aborts

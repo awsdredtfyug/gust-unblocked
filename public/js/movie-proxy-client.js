@@ -20,6 +20,21 @@
     }
   })();
 
+  // One-shot diagnostic beacon helper, defined before any hook so hook
+  // failures themselves can be reported (Safari/WebKit silently rejects
+  // some prototype redefinitions that succeed on Chromium — a PC/iPad
+  // divergence that is otherwise invisible from server logs).
+  function beaconErr(msg) {
+    try {
+      var img = new Image();
+      img.src =
+        "/movie-ping?v=20260929.11&origin=" +
+        encodeURIComponent(targetOrigin || "none") +
+        "&err=" +
+        encodeURIComponent(String(msg).slice(0, 300));
+    } catch (e) {}
+  }
+
   // SPA providers (flixer.su, vidsrc.pm) route on window.location.pathname,
   // which inside the relay is /movie-proxy — so their router matches
   // nothing and the frame stays black with no errors. Mirror the upstream
@@ -37,7 +52,9 @@
     ) {
       history.replaceState(null, "", upstreamPath);
     }
-  } catch (e) {}
+  } catch (e) {
+    beaconErr("hook:replaceState:" + ((e && e.message) || e));
+  }
 
   // Providers such as Videm serve their player with `<base href="/">`, so a
   // request for `api.php` means the site root in their own context. Resolving
@@ -83,7 +100,7 @@
     } catch (e) {}
     var pingImg = new Image();
     pingImg.src =
-      "/movie-ping?v=20260929.10&origin=" +
+      "/movie-ping?v=20260929.11&origin=" +
       encodeURIComponent(targetOrigin || "none") +
       "&sample=" +
       encodeURIComponent(pingSample);
@@ -96,14 +113,7 @@
   // (Image src is not hooked below). Remove once playback is stable.
   try {
     var errBeacon = function (msg) {
-      try {
-        var img = new Image();
-        img.src =
-          "/movie-ping?v=20260929.10&origin=" +
-          encodeURIComponent(targetOrigin || "none") +
-          "&err=" +
-          encodeURIComponent(String(msg).slice(0, 300));
-      } catch (e) {}
+      beaconErr(msg);
     };
     window.addEventListener("error", function (e) {
       errBeacon(
@@ -289,7 +299,9 @@
       }
       return origSetAttr.call(this, name, val);
     };
-  } catch (e) {}
+  } catch (e) {
+    beaconErr("hook:iframe-src:" + ((e && e.message) || e));
+  }
 
   // Overwrite video/audio src
   try {
@@ -314,7 +326,77 @@
       }
       return mediaSetAttr.call(this, attrName, val);
     };
-  } catch (e) {}
+    // iPad diagnosis: report play() rejections (Safari autoplay policy) and
+    // media element errors (codec/HLS failures show as black video with no
+    // JS exception). One beacon each per element to avoid log spam.
+    try {
+      var origPlay = mediaProto.play;
+      if (origPlay) {
+        mediaProto.play = function () {
+          try {
+            var p = origPlay.apply(this, arguments);
+            if (p && p.catch) {
+              var el = this;
+              p.catch(function (playErr) {
+                try {
+                  if (!el.__mpPlayBeacon) {
+                    el.__mpPlayBeacon = true;
+                    beaconErr(
+                      "video:play-rejected:" +
+                        ((playErr && playErr.name) || "?") +
+                        ":" +
+                        ((playErr && playErr.message) || playErr),
+                    );
+                  }
+                } catch (e) {}
+              });
+            }
+            return p;
+          } catch (e) {
+            return origPlay.apply(this, arguments);
+          }
+        };
+      }
+    } catch (e) {
+      beaconErr("hook:media-play:" + ((e && e.message) || e));
+    }
+    try {
+      document.addEventListener(
+        "error",
+        function (ev) {
+          try {
+            var t = ev.target;
+            if (
+              t &&
+              (t.tagName === "VIDEO" ||
+                t.tagName === "AUDIO" ||
+                t.tagName === "SOURCE")
+            ) {
+              if (t.__mpErrBeacon) return;
+              t.__mpErrBeacon = true;
+              var code =
+                t.error && typeof t.error.code !== "undefined"
+                  ? t.error.code
+                  : "?";
+              var srcHost = "?";
+              try {
+                srcHost = new URL(
+                  t.currentSrc || t.src || "",
+                  location.href,
+                ).host;
+              } catch (e) {}
+              beaconErr("video:error:" + t.tagName + ":code=" + code + ":host=" + srcHost);
+            }
+          } catch (e) {}
+        },
+        true,
+      );
+    } catch (e) {
+      beaconErr("hook:media-error:" + ((e && e.message) || e));
+    }
+  } catch (e) {
+    beaconErr("hook:media-src:" + ((e && e.message) || e));
+  }
 
   // Overwrite subtitle track and source src. Videm assigns track URLs
   // directly (`tr.src = 'api.php?a=sub&ref=...'`); without this the URL
@@ -347,7 +429,9 @@
         return protoSetAttr.call(this, attrName, val);
       };
     });
-  } catch (e) {}
+  } catch (e) {
+    beaconErr("hook:track-source:" + ((e && e.message) || e));
+  }
 
   // Providers dynamically create scripts, images, links, forms, and embeds.
   // Static HTML rewriting cannot see those assignments, so hook their URL
@@ -383,7 +467,9 @@
         }
         return originalSetAttribute.call(this, name, val);
       };
-    } catch (e) {}
+    } catch (e) {
+      beaconErr("hook:" + constructorName + ":" + ((e && e.message) || e));
+    }
   }
 
   [
@@ -547,8 +633,9 @@
         enumerable: scriptTypeDesc.enumerable,
       });
     }
-  } catch (e) {}
-
+  } catch (e) {
+    beaconErr("hook:script-text:" + ((e && e.message) || e));
+  }
   // sendBeacon is commonly used with root-relative provider endpoints and is
   // not routed through fetch. Keep it inside the same proxy boundary.
   try {
@@ -558,7 +645,9 @@
         return originalSendBeacon.call(this, toProxyUrl(String(url)), data);
       };
     }
-  } catch (e) {}
+  } catch (e) {
+    beaconErr("hook:sendBeacon:" + ((e && e.message) || e));
+  }
 
   // Worker/EventSource constructors also perform network requests without
   // using fetch or XHR.
@@ -571,7 +660,9 @@
       };
       Wrapped.prototype = Original.prototype;
       window[name] = Wrapped;
-    } catch (e) {}
+    } catch (e) {
+      beaconErr("hook:" + name + ":" + ((e && e.message) || e));
+    }
   }
   ["Worker", "SharedWorker", "EventSource"].forEach(hookUrlConstructor);
 
