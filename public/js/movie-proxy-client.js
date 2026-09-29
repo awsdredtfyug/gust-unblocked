@@ -20,6 +20,25 @@
     }
   })();
 
+  // SPA providers (flixer.su, vidsrc.pm) route on window.location.pathname,
+  // which inside the relay is /movie-proxy — so their router matches
+  // nothing and the frame stays black with no errors. Mirror the upstream
+  // path/query/hash into the address bar (same-origin, no reload) before
+  // app scripts boot. Network resolution is unaffected: every hook below
+  // resolves against the upstream target URL, never location.href.
+  try {
+    var upstreamUrl = new URL(targetUrl);
+    var upstreamPath =
+      upstreamUrl.pathname + upstreamUrl.search + upstreamUrl.hash;
+    if (
+      upstreamUrl.protocol.indexOf("http") === 0 &&
+      location.pathname.indexOf(PROXY_ROUTE) === 0 &&
+      location.pathname + location.search + location.hash !== upstreamPath
+    ) {
+      history.replaceState(null, "", upstreamPath);
+    }
+  } catch (e) {}
+
   // Providers such as Videm serve their player with `<base href="/">`, so a
   // request for `api.php` means the site root in their own context. Resolving
   // only against the proxied document URL would send it to
@@ -64,7 +83,7 @@
     } catch (e) {}
     var pingImg = new Image();
     pingImg.src =
-      "/movie-ping?v=20260928.1&origin=" +
+      "/movie-ping?v=20260929.7&origin=" +
       encodeURIComponent(targetOrigin || "none") +
       "&sample=" +
       encodeURIComponent(pingSample);
@@ -80,7 +99,7 @@
       try {
         var img = new Image();
         img.src =
-          "/movie-ping?v=20260928.1&origin=" +
+          "/movie-ping?v=20260929.7&origin=" +
           encodeURIComponent(targetOrigin || "none") +
           "&err=" +
           encodeURIComponent(String(msg).slice(0, 300));

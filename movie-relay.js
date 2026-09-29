@@ -24,11 +24,11 @@ const MAX_SCRIPT_BYTES = 8 * 1024 * 1024;
 const RELAY_CSP =
   "default-src 'self' data: blob:; " +
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; " +
-  "style-src 'self' 'unsafe-inline'; " +
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
   "connect-src 'self' blob:; " +
   "img-src 'self' data: blob: https://flagcdn.com https://image.tmdb.org; " +
   "media-src 'self' data: blob:; " +
-  "font-src 'self' data:; " +
+  "font-src 'self' data: https://fonts.gstatic.com; " +
   "frame-src 'self' blob:; " +
   "worker-src 'self' blob:; " +
   "form-action 'self'; " +
@@ -343,7 +343,7 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
   // storyboard-only master) to hls3 (verified video) itself. The only
   // server-side piece it needs is the JWPlayer base rewrite above.
 
-  const scriptTag = `<script>window.__MOVIE_PROXY_TARGET__=${JSON.stringify(href).replace(/</g, "\\u003c")};window.__MOVIE_PROXY_ORIGIN__=${JSON.stringify(origin).replace(/</g, "\\u003c")};</script><script src="/js/movie-proxy-client.js?v=20260928.1"></script>`;
+  const scriptTag = `<script>window.__MOVIE_PROXY_TARGET__=${JSON.stringify(href).replace(/</g, "\\u003c")};window.__MOVIE_PROXY_ORIGIN__=${JSON.stringify(origin).replace(/</g, "\\u003c")};</script><script src="/js/movie-proxy-client.js?v=20260929.7"></script>`;
 
   // Some provider players (2vcdn.skin's packed boot) call jQuery (`$`)
   // at top level without loading it. The resulting ReferenceError aborts
@@ -909,6 +909,8 @@ export function registerMovieRelay(
         "x-frame-options",
         "content-security-policy",
         "content-security-policy-report-only",
+        "feature-policy",
+        "permissions-policy",
         "cross-origin-embedder-policy",
         "cross-origin-opener-policy",
         "cross-origin-resource-policy",
