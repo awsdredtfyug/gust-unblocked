@@ -83,7 +83,7 @@
     } catch (e) {}
     var pingImg = new Image();
     pingImg.src =
-      "/movie-ping?v=20260929.9&origin=" +
+      "/movie-ping?v=20260929.10&origin=" +
       encodeURIComponent(targetOrigin || "none") +
       "&sample=" +
       encodeURIComponent(pingSample);
@@ -99,7 +99,7 @@
       try {
         var img = new Image();
         img.src =
-          "/movie-ping?v=20260929.9&origin=" +
+          "/movie-ping?v=20260929.10&origin=" +
           encodeURIComponent(targetOrigin || "none") +
           "&err=" +
           encodeURIComponent(String(msg).slice(0, 300));
@@ -440,6 +440,27 @@
     return value;
   }
 
+  // Re-read both inline-script properties so the type hook below can
+  // re-process whichever one the provider assigned first.
+  function rewriteScriptBody(el) {
+    try {
+      if (
+        !el ||
+        el.tagName !== "SCRIPT" ||
+        String(el.type || "").toLowerCase() !== "module"
+      )
+        return;
+      var cur = nodeTextDesc.get.call(el);
+      var rew = rewriteInlineModuleText(cur);
+      if (rew !== cur) nodeTextDesc.set.call(el, rew);
+      if (scriptInnerHtmlDesc) {
+        var curHtml = scriptInnerHtmlDesc.get.call(el);
+        var rewHtml = rewriteInlineModuleText(curHtml);
+        if (rewHtml !== curHtml) scriptInnerHtmlDesc.set.call(el, rewHtml);
+      }
+    } catch (e) {}
+  }
+
   try {
     var scriptProto = window.HTMLScriptElement
       ? window.HTMLScriptElement.prototype
@@ -477,6 +498,26 @@
         enumerable: scriptTextDesc.enumerable,
       });
     }
+    // innerHTML is the third way to fill an inline script (flixer's WASM
+    // loader uses `t.innerHTML = ...imports...`). Shadow it on script
+    // elements only — other elements' markup is never module source.
+    var scriptInnerHtmlDesc =
+      scriptProto &&
+      Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    if (scriptProto && scriptInnerHtmlDesc && scriptInnerHtmlDesc.set) {
+      Object.defineProperty(scriptProto, "innerHTML", {
+        get: scriptInnerHtmlDesc.get
+          ? function () {
+              return scriptInnerHtmlDesc.get.call(this);
+            }
+          : undefined,
+        set: function (val) {
+          scriptInnerHtmlDesc.set.call(this, maybeRewriteModuleText(this, val));
+        },
+        configurable: true,
+        enumerable: scriptInnerHtmlDesc.enumerable,
+      });
+    }
     // Type may be assigned after the text; re-process once it becomes a
     // module script so ordering never matters.
     var scriptTypeDesc =
@@ -498,11 +539,8 @@
         set: function (val) {
           scriptTypeDesc.set.call(this, val);
           try {
-            if (String(val || "").toLowerCase() === "module") {
-              var cur = nodeTextDesc.get.call(this);
-              var rew = rewriteInlineModuleText(cur);
-              if (rew !== cur) nodeTextDesc.set.call(this, rew);
-            }
+            if (String(val || "").toLowerCase() === "module")
+              rewriteScriptBody(this);
           } catch (e) {}
         },
         configurable: true,
