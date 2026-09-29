@@ -33,8 +33,8 @@
   "packageManager": "pnpm@10.32.1",
   "pnpm": {
     "overrides": {
-      "fast-uri@^3.0.1": "3.1.6",
-      "fast-uri@^4.0.0": "4.1.3"
+      "fast-uri@^3.0.1": "3.1.7",
+      "fast-uri@^4.0.0": "4.1.4"
     }
   }
 }
