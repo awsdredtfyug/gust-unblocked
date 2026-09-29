@@ -6,9 +6,10 @@ var TMDB_API = "/api/tmdb";
 
 var MOVIES_SOURCES = [
   {
-    // Keep this source behind the relay too. Its media CDN currently
-    // challenges the VPS, but falling back to a direct embed would expose
-    // the viewer and violate the movie player's proxy-only boundary.
+    // NOTE (2026-09-29): front door 200 from the VPS, but no title loads —
+    // the media chain answers the VPS with a Cloudflare challenge. Kept
+    // proxied (never direct) per user preference; expect failure until the
+    // CDN accepts the VPS egress.
     name: "VidSrc (vidsrcme.ru)",
     url: function (t, id, s, e) {
       var upstream =
@@ -41,20 +42,9 @@ var MOVIES_SOURCES = [
     },
   },
   {
-    name: "SmashyStream",
-    url: function (t, id, s, e) {
-      var upstream =
-        "https://embed.smashystream.com/playere.php?tmdb=" +
-        id +
-        (t === "tv" ? "&season=" + s + "&episode=" + e : "");
-      return "/movie-proxy?url=" + encodeURIComponent(upstream);
-    },
-  },
-  {
-    // Verified 2026-09-08: full chain works through the relay from the VPS
-    // (vidsrc.to → vsembed.ru → cloudorchestranova.com → per-host
-    // generate.php token → comityofcognomen.site playlists/segments, all
-    // 200). Fallback source (2Embed is the default).
+    // NOTE (2026-09-29): front door 200 from the VPS, but the media chain
+    // currently loop-retries (filamentoffable.space CDN 403/429/401s).
+    // Fallback source (2Embed is the default).
     name: "VidSrc.to (vidsrc.to)",
     url: function (t, id, s, e) {
       var upstream =
@@ -64,64 +54,53 @@ var MOVIES_SOURCES = [
     },
   },
   {
-    // VidLink: documented TMDB embed (vidlink.pro). Movie /movie/{id},
-    // TV /tv/{id}/{s}/{e}. HLS + subtitle support, widely used 2026.
-    name: "VidLink (vidlink.pro)",
+    // ADDED 2026-09-29: VidSrc.pm ("Vidflix", vidstack player). Front door
+    // 200 from the VPS for both movie and TV patterns. Playback NOT yet
+    // verified end to end — live-test before trusting it.
+    name: "VidSrc.pm (vidsrc.pm)",
     url: function (t, id, s, e) {
       var upstream =
-        t === "movie"
-          ? "https://vidlink.pro/movie/" + id
-          : "https://vidlink.pro/tv/" + id + "/" + s + "/" + e;
-      return "/movie-proxy?url=" + encodeURIComponent(upstream);
-    },
-  },
-  {
-    // Embed.su: https://embed.su/embed/movie/{id},
-    // https://embed.su/embed/tv/{id}/{s}/{e}. Ranked "very reliable"
-    // across EZstream/community lists.
-    name: "Embed.su",
-    url: function (t, id, s, e) {
-      var upstream =
-        "https://embed.su/embed/" +
+        "https://vidsrc.pm/embed/" +
         (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
       return "/movie-proxy?url=" + encodeURIComponent(upstream);
     },
   },
   {
-    // VidEasy: https://player.videasy.net/movie/{id},
-    // https://player.videasy.net/tv/{id}/{s}/{e}. Modern HLS player
-    // used by several TMDB front-ends.
-    name: "VidEasy (videasy.net)",
+    // ADDED 2026-09-29: Flixer. Full watch pages (not a minimal embed):
+    // movie https://flixer.su/watch/movie/{id},
+    // TV https://flixer.su/watch/tv/{id}/{s}/{e} (OTX-verified pattern).
+    // HAR-verified chain (tmdb=1032863): watch page + API
+    // (plsdontscrapemelove.flixer.su) + HLS master/variants on
+    // shrek.dragonballzfans.xyz + TS segments on serve.dragonballzfans.xyz
+    // (segments mislabeled text/html — the relay's binary guard covers
+    // those) + subtitles on sub.vdrk.site. The player mints its own
+    // per-title stream tokens client-side, so no server-side minting is
+    // needed — the relay just proxies. Front door + API + media hosts all
+    // answer 200/404-alive from the VPS. Playback NOT yet verified end to
+    // end — live-test before trusting it.
+    name: "Flixer (flixer.su)",
     url: function (t, id, s, e) {
       var upstream =
-        "https://player.videasy.net/" +
+        "https://flixer.su/watch/" +
         (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
       return "/movie-proxy?url=" + encodeURIComponent(upstream);
     },
   },
-  {
-    // AutoEmbed: https://player.autoembed.cc/embed/movie/{id},
-    // https://player.autoembed.cc/embed/tv/{id}/{s}/{e}.
-    name: "AutoEmbed",
-    url: function (t, id, s, e) {
-      var upstream =
-        "https://player.autoembed.cc/embed/" +
-        (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
-      return "/movie-proxy?url=" + encodeURIComponent(upstream);
-    },
-  },
-  {
-    // VidSrc.cc v2: https://vidsrc.cc/v2/embed/movie/{id},
-    // https://vidsrc.cc/v2/embed/tv/{id}/{s}/{e}. Separate infra from
-    // vidsrc.to / vidsrcme.ru, useful when one family blocks the VPS.
-    name: "VidSrc.cc v2",
-    url: function (t, id, s, e) {
-      var upstream =
-        "https://vidsrc.cc/v2/embed/" +
-        (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
-      return "/movie-proxy?url=" + encodeURIComponent(upstream);
-    },
-  },
+  // REMOVED 2026-09-29 (VPS-verified dead, kept out of the dropdown):
+  // - SmashyStream: 301-redirects to anyembed.xyz, whose front door serves
+  //   a Cloudflare browser challenge the relay can never complete
+  //   (set-cookie is stripped, so the challenge never clears). The Vite
+  //   React shell then boots without data ("useCallback / R.current is
+  //   null"). Dead until the front door stops challenging.
+  // - VidLink (vidlink.pro): front door 403 "you have been blocked"
+  //   (Cloudflare datacenter block).
+  // - Embed.su: DNS dead (ENOTFOUND from the VPS resolver).
+  // - VidEasy (player.videasy.net): 301 to player.videasy.to, which renders
+  //   a grey page (its users.videasy.to/api/script.js 404s).
+  // - AutoEmbed: player.autoembed.cc NXDOMAIN, and autoembed.co is only a
+  //   wrapper iframing that dead host (plus 2embed/vidsrc.to, already
+  //   listed). Adds nothing.
+  // - VidSrc.cc v2: front door 403 into a Cloudflare challenge page.
   // NOTE (2026-09-29): "HLS (hls.lol)" and "Aether (lul)" entries lived
   // here. Both removed from the dropdown: hls.lol serves an
   // "atlantic.st disable VPN" slate to datacenter egress (screenshot
