@@ -83,7 +83,7 @@
     } catch (e) {}
     var pingImg = new Image();
     pingImg.src =
-      "/movie-ping?v=20260929.7&origin=" +
+      "/movie-ping?v=20260929.8&origin=" +
       encodeURIComponent(targetOrigin || "none") +
       "&sample=" +
       encodeURIComponent(pingSample);
@@ -99,7 +99,7 @@
       try {
         var img = new Image();
         img.src =
-          "/movie-ping?v=20260929.7&origin=" +
+          "/movie-ping?v=20260929.8&origin=" +
           encodeURIComponent(targetOrigin || "none") +
           "&err=" +
           encodeURIComponent(String(msg).slice(0, 300));
@@ -143,6 +143,13 @@
   function toProxyUrl(rawUrl, ref) {
     if (!rawUrl || typeof rawUrl !== "string") return rawUrl;
     var trimmed = decodeEntities(rawUrl.trim());
+    // Vite's runtime preload helper builds chunk URLs as "/" + path, so an
+    // already-rewritten "/movie-proxy?url=..." becomes "//movie-proxy?..."
+    // (protocol-relative, host "movie-proxy" — DNS failure). Fold it back
+    // to the relay route so preloads hit the same canonical URL the
+    // module loader will import (module identity depends on it).
+    if (/^\/\/movie-proxy(?=\/|\?|$)/.test(trimmed))
+      trimmed = trimmed.slice(1);
     // Some embed scripts blindly prepend their CDN base to an iframe URL.
     // Recover our absolute relay URL from values such as
     // https://cdn.example/e/https://aetheris.win/movie-proxy?url=...

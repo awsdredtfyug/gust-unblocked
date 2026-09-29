@@ -267,10 +267,13 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
 
     try {
       const abs = new URL(decoded, href).href;
+      // Module identity: rewritten document-asset URLs carry NO referer
+      // parameter (see rewriteJsImports). Browsers deduplicate ES modules
+      // by exact URL string, so one upstream file must equal one proxy URL
+      // everywhere — HTML, JS chunk tables, and dynamic imports alike.
       // The subtitle picker uses this value as a prefix and appends a
-      // country code (for example, `us.png`) at runtime. Proxying the
-      // prefix first puts that suffix after our `referer` query parameter
-      // and produces malformed requests such as `autoplay=trueus.png`.
+      // country code (for example, `us.png`) at runtime, so flagcdn
+      // prefixes stay direct (they are allowlisted in the relay CSP).
       if (abs.startsWith("https://flagcdn.com/w40/")) return match;
       // Use an absolute URL because some players prepend their own CDN base
       // to iframe attributes. A root-relative proxy path can otherwise become
@@ -285,24 +288,21 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
         // vast.js?v=32, ...) from that base. A plain proxied URL
         // percent-encodes the upstream path, so the literal "/jwplayer.js"
         // the lookup needs is absent and setup throws "Could not locate
-        // jwplayer.js script tag". A `#/jwplayer.js` fragment satisfied the
-        // lookup but produced
-        //   .../movie-proxy?url=...jwplayer.js%3Fv%3D7&referer=...#/
-        // as the base, so every chunk request went back to the jwplayer.js
-        // proxy URL (ChunkLoadError) and the player never started. Keep the
-        // upstream directory percent-encoded and append a literal
-        // /jwplayer.js: JW then derives
+        // jwplayer.js script tag". Keep the upstream directory
+        // percent-encoded and append a literal /jwplayer.js: JW then derives
         //   .../movie-proxy?url=<encoded dir>/jwplayer.js?v=7
         // for the library itself and
         //   .../movie-proxy?url=<encoded dir>/provider.hlsjs.js?v=42
         // for siblings, both of which the relay resolves to the right
-        // upstream files.
+        // upstream files. (Sibling chunks built from this base carry no
+        // referer either, so they resolve to the same canonical URL the
+        // relay serves — no ChunkLoadError, no duplicates.)
         const directory =
           parsed.origin +
           parsed.pathname.slice(0, parsed.pathname.lastIndexOf("/"));
-        proxied = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent(directory)}/jwplayer.js${parsed.search}&referer=${encodeURIComponent(href)}`;
+        proxied = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent(directory)}/jwplayer.js${parsed.search}`;
       } else {
-        proxied = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
+        proxied = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent(abs)}`;
       }
       return `${attr}=${quote}${proxied}${quote}`;
     } catch {
@@ -343,7 +343,7 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
   // storyboard-only master) to hls3 (verified video) itself. The only
   // server-side piece it needs is the JWPlayer base rewrite above.
 
-  const scriptTag = `<script>window.__MOVIE_PROXY_TARGET__=${JSON.stringify(href).replace(/</g, "\\u003c")};window.__MOVIE_PROXY_ORIGIN__=${JSON.stringify(origin).replace(/</g, "\\u003c")};</script><script src="/js/movie-proxy-client.js?v=20260929.7"></script>`;
+  const scriptTag = `<script>window.__MOVIE_PROXY_TARGET__=${JSON.stringify(href).replace(/</g, "\\u003c")};window.__MOVIE_PROXY_ORIGIN__=${JSON.stringify(origin).replace(/</g, "\\u003c")};</script><script src="/js/movie-proxy-client.js?v=20260929.8"></script>`;
 
   // Some provider players (2vcdn.skin's packed boot) call jQuery (`$`)
   // at top level without loading it. The resulting ReferenceError aborts
@@ -362,7 +362,7 @@ function rewriteHtml(html, targetUrl, proxyOrigin) {
     /\$\s*\(|\$\./.test(cleaned) &&
     !/(var|let|const|function)\s+\$[^a-zA-Z0-9_$]|window\.\$\s*=/.test(cleaned)
   ) {
-    const jqueryUrl = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent("https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.3/jquery.min.js")}&referer=${encodeURIComponent(href)}`;
+    const jqueryUrl = `${proxyOrigin}${PROXY_ROUTE}?url=${encodeURIComponent("https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.3/jquery.min.js")}`;
     jqueryTag = `<script src="${jqueryUrl}"></script>`;
   }
 
@@ -453,6 +453,8 @@ function rewriteM3u8(playlistText, targetUrl, refererOverride) {
 function rewriteCss(cssText, targetUrl) {
   const baseUrl = new URL(unwrapProxyUrl(targetUrl.href));
   const href = baseUrl.href;
+  // Same canonical-URL rule as rewriteJsImports/rewriteHtml: no referer
+  // parameter, so one upstream file equals one proxy URL everywhere.
   let rewritten = cssText.replace(
     /url\((["']?)([^"']+?)\1\)/gi,
     (match, quote, url) => {
@@ -465,7 +467,7 @@ function rewriteCss(cssText, targetUrl) {
         return match;
       try {
         const abs = new URL(unwrapProxyUrl(trimmed), href).href;
-        const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
+        const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}`;
         return `url(${quote}${proxied}${quote})`;
       } catch {
         return match;
@@ -477,7 +479,7 @@ function rewriteCss(cssText, targetUrl) {
     (match, prefix, quote, url) => {
       try {
         const abs = new URL(unwrapProxyUrl(url.trim()), href).href;
-        const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
+        const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}`;
         return `${prefix}${quote}${proxied}${quote}`;
       } catch {
         return match;
@@ -490,7 +492,18 @@ function rewriteCss(cssText, targetUrl) {
 function rewriteJsImports(jsText, targetUrl) {
   const baseUrl = new URL(unwrapProxyUrl(targetUrl.href));
   const href = baseUrl.href;
-  const srcUrl = targetUrl.href;
+
+  // NOTE: rewritten module URLs carry NO referer parameter on purpose.
+  // Browsers deduplicate ES modules by exact URL string, and code-split
+  // bundles import the same shared chunk from several parents (flixer's
+  // VideoPlayer chunk does `from"./index-*.js"`, i.e. back into the entry
+  // bundle). A per-importer referer would fork one upstream file into N
+  // proxy URLs, so shared singletons (React) instantiate N times and the
+  // app dies with "Minified React error #321" plus removeChild teardown
+  // cascades. One upstream file must equal one proxy URL everywhere.
+  // Upstream still gets a Referer header (the asset's own URL fallback in
+  // the request handler); playlists keep their own referer scheme in
+  // rewriteM3u8 because media hosts gate on it.
 
   // Vite 5 bundles keep their chunk table in m.f=[...] (the raw chunk paths,
   // e.g. "assets/vendor-x.js"), which dynamic import(__vite__mapDeps[N])
@@ -508,9 +521,7 @@ function rewriteJsImports(jsText, targetUrl) {
           const p = (d1 || d2).replace(/^\.\.?\//, "");
           try {
             const abs = new URL(p, `${baseUrl.origin}/`).href;
-            return JSON.stringify(
-              `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(srcUrl)}`,
-            );
+            return JSON.stringify(`${PROXY_ROUTE}?url=${encodeURIComponent(abs)}`);
           } catch {
             return m;
           }
@@ -531,7 +542,7 @@ function rewriteJsImports(jsText, targetUrl) {
     (match, prefix, path, suffix) => {
       try {
         const abs = new URL(path, href).href;
-        const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
+        const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}`;
         return prefix + proxied + suffix;
       } catch {
         return match;
@@ -547,7 +558,7 @@ function rewriteJsImports(jsText, targetUrl) {
     (match, prefix, path, suffix) => {
       try {
         const abs = new URL(path, href).href;
-        const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(href)}`;
+        const proxied = `${PROXY_ROUTE}?url=${encodeURIComponent(abs)}`;
         return prefix + proxied + suffix;
       } catch {
         return match;
