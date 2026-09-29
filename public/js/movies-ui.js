@@ -381,7 +381,7 @@
     playerStatus.textContent = "Loading provider…";
     playerStatus.classList.remove("hidden");
     hint.textContent =
-      "Proxy-only playback. If playback is unavailable, try another source; provider loading does not confirm playback.";
+      "Movies are fixed — Flixer is now the default source. If a title fails here, try another source.";
     dbg(
       "play:",
       provider.name,
@@ -440,11 +440,10 @@
       option.textContent = provider.name;
       source.appendChild(option);
     });
-    // 2Embed is the default provider: its swish/2vcdn path plays end to end
-    // through the relay since the decoy-fragment fix, and its per-title
-    // server menu (2embed/Vsrc/Videm/Vcr) gives more fallbacks than a
-    // single-chain source. VidSrc.to stays selectable as a fallback.
-    var sourceDefaultVersion = "2embed-default-20260928";
+    // Flixer is the default provider (2026-09-29): the relay forwards its
+    // WASM-signed auth headers, so the sources endpoint answers instead of
+    // 403ing with "no sources found". 2Embed stays selectable as a fallback.
+    var sourceDefaultVersion = "flixer-default-20260929";
     var savedVersion = Aetheris.storage.getItem("movieSourceVersion");
     var saved = Number(Aetheris.storage.getItem("movieSourceIdx"));
     source.value =
@@ -453,7 +452,7 @@
       Number.isInteger(saved) &&
       MOVIES_SOURCES[saved]
         ? String(saved)
-        : "1";
+        : "4";
     Aetheris.storage.setItem("movieSourceVersion", sourceDefaultVersion);
     Aetheris.storage.setItem("movieSourceIdx", source.value);
     source.disabled = type === "tv";

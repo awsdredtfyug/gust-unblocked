@@ -27,8 +27,8 @@ var MOVIES_SOURCES = [
     // when every 2Embed server for that title funnels to a host that rejects
     // the VPS egress (tagivi.com and unfortunatelyejectinflected answer 403
     // to the datacenter IP, relay3.videm.xyz rate-limits with 429), so keep
-    // VidSrc.to as the fallback. Default source. Kept proxied per user
-    // preference.
+    // VidSrc.to as the fallback. Fallback source (Flixer is the default
+    // since 2026-09-29). Kept proxied per user preference.
     name: "2Embed (2embed.cc)",
     url: function (t, id, s, e) {
       // 2Embed's TV endpoint expects its parameters after a
@@ -76,8 +76,10 @@ var MOVIES_SOURCES = [
     // those) + subtitles on sub.vdrk.site. The player mints its own
     // per-title stream tokens client-side, so no server-side minting is
     // needed — the relay just proxies. Front door + API + media hosts all
-    // answer 200/404-alive from the VPS. Playback NOT yet verified end to
-    // end — live-test before trusting it.
+    // answer 200/404-alive from the VPS. Default source since 2026-09-29:
+    // the relay forwards the WASM-signed auth headers (X-Api-Key,
+    // X-Request-*, fingerprints), verified live via INVALID_TIMESTAMP on a
+    // stale-signature replay (was: 403 "no sources found").
     name: "Flixer (flixer.su)",
     url: function (t, id, s, e) {
       var upstream =
