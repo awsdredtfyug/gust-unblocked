@@ -83,7 +83,7 @@
     } catch (e) {}
     var pingImg = new Image();
     pingImg.src =
-      "/movie-ping?v=20260929.8&origin=" +
+      "/movie-ping?v=20260929.9&origin=" +
       encodeURIComponent(targetOrigin || "none") +
       "&sample=" +
       encodeURIComponent(pingSample);
@@ -99,7 +99,7 @@
       try {
         var img = new Image();
         img.src =
-          "/movie-ping?v=20260929.8&origin=" +
+          "/movie-ping?v=20260929.9&origin=" +
           encodeURIComponent(targetOrigin || "none") +
           "&err=" +
           encodeURIComponent(String(msg).slice(0, 300));
@@ -400,6 +400,116 @@
   ].forEach(function (entry) {
     hookUrlElement(entry[0], entry[1]);
   });
+
+  // Inline module scripts assembled at runtime (flixer injects
+  // `<script type=module>` whose imports are absolute upstream URLs built
+  // from variables) bypass every network hook: the server never sees the
+  // final specifier, native import fetches it directly, and the relay CSP
+  // blocks that to preserve the proxy-only boundary ("Loading failed for
+  // the module", status 0). Rewrite absolute http(s) URLs in
+  // module-specifier positions to relay URLs at assignment time. Only
+  // import positions are touched, and same-origin URLs are left alone, so
+  // string constants used for comparison or messaging stay intact.
+  function rewriteInlineModuleText(text) {
+    if (typeof text !== "string" || text.indexOf("import") === -1)
+      return text;
+    return text.replace(
+      /(from\s*["']|import\s*["']|import\(\s*["'])(https?:\/\/[^"'\s]+)(["'])/g,
+      function (match, prefix, url, suffix) {
+        try {
+          if (new URL(url).origin === location.origin) return match;
+          return prefix + toProxyUrl(url) + suffix;
+        } catch (e) {
+          return match;
+        }
+      },
+    );
+  }
+
+  function maybeRewriteModuleText(el, value) {
+    try {
+      if (
+        el &&
+        el.tagName === "SCRIPT" &&
+        String(el.type || "").toLowerCase() === "module" &&
+        typeof value === "string"
+      ) {
+        return rewriteInlineModuleText(value);
+      }
+    } catch (e) {}
+    return value;
+  }
+
+  try {
+    var scriptProto = window.HTMLScriptElement
+      ? window.HTMLScriptElement.prototype
+      : null;
+    var nodeTextDesc =
+      scriptProto &&
+      Object.getOwnPropertyDescriptor(Node.prototype, "textContent");
+    if (scriptProto && nodeTextDesc && nodeTextDesc.set) {
+      Object.defineProperty(scriptProto, "textContent", {
+        get: nodeTextDesc.get
+          ? function () {
+              return nodeTextDesc.get.call(this);
+            }
+          : undefined,
+        set: function (val) {
+          nodeTextDesc.set.call(this, maybeRewriteModuleText(this, val));
+        },
+        configurable: true,
+        enumerable: nodeTextDesc.enumerable,
+      });
+    }
+    var scriptTextDesc =
+      scriptProto && Object.getOwnPropertyDescriptor(scriptProto, "text");
+    if (scriptProto && scriptTextDesc && scriptTextDesc.set) {
+      Object.defineProperty(scriptProto, "text", {
+        get: scriptTextDesc.get
+          ? function () {
+              return scriptTextDesc.get.call(this);
+            }
+          : undefined,
+        set: function (val) {
+          scriptTextDesc.set.call(this, maybeRewriteModuleText(this, val));
+        },
+        configurable: true,
+        enumerable: scriptTextDesc.enumerable,
+      });
+    }
+    // Type may be assigned after the text; re-process once it becomes a
+    // module script so ordering never matters.
+    var scriptTypeDesc =
+      scriptProto && Object.getOwnPropertyDescriptor(scriptProto, "type");
+    if (
+      scriptProto &&
+      scriptTypeDesc &&
+      scriptTypeDesc.set &&
+      nodeTextDesc &&
+      nodeTextDesc.get &&
+      nodeTextDesc.set
+    ) {
+      Object.defineProperty(scriptProto, "type", {
+        get: scriptTypeDesc.get
+          ? function () {
+              return scriptTypeDesc.get.call(this);
+            }
+          : undefined,
+        set: function (val) {
+          scriptTypeDesc.set.call(this, val);
+          try {
+            if (String(val || "").toLowerCase() === "module") {
+              var cur = nodeTextDesc.get.call(this);
+              var rew = rewriteInlineModuleText(cur);
+              if (rew !== cur) nodeTextDesc.set.call(this, rew);
+            }
+          } catch (e) {}
+        },
+        configurable: true,
+        enumerable: scriptTypeDesc.enumerable,
+      });
+    }
+  } catch (e) {}
 
   // sendBeacon is commonly used with root-relative provider endpoints and is
   // not routed through fetch. Keep it inside the same proxy boundary.
