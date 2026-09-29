@@ -365,6 +365,20 @@
           .then(blob => {
             const url = URL.createObjectURL(blob);
             assetUrls.set(BUNDLE_KEY, url);
+            // Once Unity has parsed the bundle into its heap, our 590 MB
+            // Blob is a pure duplicate. Drop it after a grace period so
+            // steady-state gameplay holds heap only. revokeObjectURL never
+            // breaks in-flight reads; a later re-request simply downloads
+            // again (a stall, not a crash).
+            setTimeout(() => {
+              try {
+                if (assetUrls.get(BUNDLE_KEY) === url) {
+                  URL.revokeObjectURL(url);
+                  assetUrls.delete(BUNDLE_KEY);
+                }
+              } catch (error) {}
+              bundlePromise = null;
+            }, 60000);
             return url;
           })
           .catch(error => { bundlePromise = null; throw error; });
