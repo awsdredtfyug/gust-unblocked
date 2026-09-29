@@ -63,6 +63,65 @@ var MOVIES_SOURCES = [
       return "/movie-proxy?url=" + encodeURIComponent(upstream);
     },
   },
+  {
+    // VidLink: documented TMDB embed (vidlink.pro). Movie /movie/{id},
+    // TV /tv/{id}/{s}/{e}. HLS + subtitle support, widely used 2026.
+    name: "VidLink (vidlink.pro)",
+    url: function (t, id, s, e) {
+      var upstream =
+        t === "movie"
+          ? "https://vidlink.pro/movie/" + id
+          : "https://vidlink.pro/tv/" + id + "/" + s + "/" + e;
+      return "/movie-proxy?url=" + encodeURIComponent(upstream);
+    },
+  },
+  {
+    // Embed.su: https://embed.su/embed/movie/{id},
+    // https://embed.su/embed/tv/{id}/{s}/{e}. Ranked "very reliable"
+    // across EZstream/community lists.
+    name: "Embed.su",
+    url: function (t, id, s, e) {
+      var upstream =
+        "https://embed.su/embed/" +
+        (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
+      return "/movie-proxy?url=" + encodeURIComponent(upstream);
+    },
+  },
+  {
+    // VidEasy: https://player.videasy.net/movie/{id},
+    // https://player.videasy.net/tv/{id}/{s}/{e}. Modern HLS player
+    // used by several TMDB front-ends.
+    name: "VidEasy (videasy.net)",
+    url: function (t, id, s, e) {
+      var upstream =
+        "https://player.videasy.net/" +
+        (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
+      return "/movie-proxy?url=" + encodeURIComponent(upstream);
+    },
+  },
+  {
+    // AutoEmbed: https://player.autoembed.cc/embed/movie/{id},
+    // https://player.autoembed.cc/embed/tv/{id}/{s}/{e}.
+    name: "AutoEmbed",
+    url: function (t, id, s, e) {
+      var upstream =
+        "https://player.autoembed.cc/embed/" +
+        (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
+      return "/movie-proxy?url=" + encodeURIComponent(upstream);
+    },
+  },
+  {
+    // VidSrc.cc v2: https://vidsrc.cc/v2/embed/movie/{id},
+    // https://vidsrc.cc/v2/embed/tv/{id}/{s}/{e}. Separate infra from
+    // vidsrc.to / vidsrcme.ru, useful when one family blocks the VPS.
+    name: "VidSrc.cc v2",
+    url: function (t, id, s, e) {
+      var upstream =
+        "https://vidsrc.cc/v2/embed/" +
+        (t === "movie" ? "movie/" + id : "tv/" + id + "/" + s + "/" + e);
+      return "/movie-proxy?url=" + encodeURIComponent(upstream);
+    },
+  },
   // NOTE (2026-09-29): "HLS (hls.lol)" and "Aether (lul)" entries lived
   // here. Both removed from the dropdown: hls.lol serves an
   // "atlantic.st disable VPN" slate to datacenter egress (screenshot
