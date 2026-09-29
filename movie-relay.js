@@ -817,6 +817,25 @@ export function registerMovieRelay(
         if (req.headers.range) {
           reqHeaders.range = req.headers.range;
         }
+        // Flixer's /images sources endpoint requires the WASM-signed auth
+        // headers (X-Api-Key, X-Request-*, fingerprints). The browser sends
+        // them to the relay, but without this passthrough they never reach
+        // upstream, which answers 403 {"error":"no sources found"}.
+        // Verified 2026-09-29 by diffing direct vs relayed HARs: metadata
+        // endpoints 200 without auth, only /images 403s when auth is lost.
+        for (const h of [
+          "x-api-key",
+          "x-request-timestamp",
+          "x-request-nonce",
+          "x-request-signature",
+          "x-client-fingerprint",
+          "x-fingerprint-lite",
+          "x-server",
+          "x-only-sources",
+          "bw90agfmywth",
+        ]) {
+          if (req.headers[h] != null) reqHeaders[h] = req.headers[h];
+        }
         if (body && method !== "GET" && method !== "HEAD") {
           reqHeaders["content-type"] =
             req.headers["content-type"] || "application/octet-stream";

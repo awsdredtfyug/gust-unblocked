@@ -528,3 +528,69 @@ test("rewriteHtml keeps self-hosted JWPlayer locatable", async (t) => {
     assert.ok(!out.includes("links.hls"));
   });
 });
+
+test("movie relay forwards flixer signed auth headers upstream", async (t) => {
+  // Flixer's /images sources endpoint 403s with "no sources found" when the
+  // WASM-signed headers never reach it. The browser sends them to the relay,
+  // so the relay must pass them through (verified 2026-09-29 via HAR diff).
+  const seen = {};
+  const upstream = http.createServer((req, res) => {
+    for (const h of [
+      "x-api-key",
+      "x-request-timestamp",
+      "x-request-nonce",
+      "x-request-signature",
+      "x-client-fingerprint",
+      "x-fingerprint-lite",
+      "bw90agfmywth",
+    ]) {
+      if (req.headers[h] != null) seen[h] = req.headers[h];
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const port = upstream.address().port;
+  const app = Fastify();
+  registerMovieRelay(app, {
+    resolveTarget: async (raw) => {
+      const url = new URL(raw);
+      if (url.hostname !== "relay-fixture.test" || url.port !== String(port))
+        throw new Error("Fixture redirect rejected.");
+      return { url, addresses: [{ address: "127.0.0.1", family: 4 }] };
+    },
+    hlsApiBase: `http://relay-fixture.test:${port}`,
+    lulApiBase: `http://relay-fixture.test:${port}/lul`,
+  });
+  await app.ready();
+  t.after(async () => {
+    await app.close();
+    upstream.closeAllConnections();
+    await new Promise((resolve) => upstream.close(resolve));
+  });
+  const result = await app.inject({
+    method: "GET",
+    url:
+      "/movie-proxy?url=" +
+      encodeURIComponent(`http://relay-fixture.test:${port}/api/images`),
+    headers: {
+      "x-api-key": "k".repeat(64),
+      "x-request-timestamp": "1790698880",
+      "x-request-nonce": "nonce123",
+      "x-request-signature": "sig==",
+      "x-client-fingerprint": "fp",
+      "x-fingerprint-lite": "lite",
+      bw90agfmywth: "1",
+    },
+  });
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(seen, {
+    "x-api-key": "k".repeat(64),
+    "x-request-timestamp": "1790698880",
+    "x-request-nonce": "nonce123",
+    "x-request-signature": "sig==",
+    "x-client-fingerprint": "fp",
+    "x-fingerprint-lite": "lite",
+    bw90agfmywth: "1",
+  });
+});
