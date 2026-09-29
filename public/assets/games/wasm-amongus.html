@@ -41,8 +41,8 @@
   </div></div>
   <div id="ios-warn"><div id="ios-warn-box">
     <h2 style="margin:0 0 12px">iPad may not run this game</h2>
-    <p style="line-height:1.5">Among Us Web downloads ~860&nbsp;MB and needs over 1&nbsp;GB of memory. iPads kill tabs past their limit, which is why the page loads, runs a few seconds, then refreshes. Older iPads physically cannot run it — play on PC instead.</p>
-    <p style="line-height:1.5">Newer (M-series) iPads have higher limits and might manage it. You can try, but expect crashes.</p>
+    <p style="line-height:1.5">Among Us Web downloads ~860&nbsp;MB and needs over 1&nbsp;GB of memory. iPads kill tabs past their limit, which is why the page loads, runs a few seconds, then refreshes. The game now loads its big content file on demand instead of all at once, which may be enough on newer iPads — older ones still may not make it.</p>
+    <p style="line-height:1.5">Newer (M-series) iPads have higher limits and the best chance. You can try, but expect possible crashes.</p>
     <div><button id="ios-force" type="button">Load anyway</button><button id="ios-back" class="secondary" type="button">Go back</button></div>
   </div></div>
   <script>
@@ -343,37 +343,87 @@
     }
 
     async function preloadStreamingAssets() {
-      const regularFiles = STREAMING_FILES.map(async file => {
+      // Small files (catalog, settings, shaders) are needed at boot. The
+      // ~590 MB asset bundle is NOT preloaded: it is fetched on demand the
+      // first time Unity requests it (see ensureLargeBundle). Holding it in
+      // RAM alongside data+wasm+heap is what jetsams iPad tabs.
+      await Promise.all(STREAMING_FILES.map(async file => {
         const url = STREAMING_ASSETS + "/" + file[0];
         const blob = await downloadBlob(url, file[2]);
         if (file[0] === "aa/catalog.json") await validateAssetCatalog(blob);
         assetUrls.set(assetKey(url), URL.createObjectURL(blob));
-      });
-      const bundle = combineParts(STREAMING_ASSETS + "/aa/WebGL/" + LARGE_BUNDLE, 34, "application/octet-stream", 2)
-        .then(blob => assetUrls.set(assetKey(STREAMING_ASSETS + "/aa/WebGL/" + LARGE_BUNDLE), URL.createObjectURL(blob)));
-      await Promise.all(regularFiles.concat(bundle));
+      }));
+    }
+
+    const BUNDLE_URL = STREAMING_ASSETS + "/aa/WebGL/" + LARGE_BUNDLE;
+    const BUNDLE_KEY = assetKey(BUNDLE_URL);
+    let bundlePromise = null;
+
+    function ensureLargeBundle() {
+      if (!bundlePromise) {
+        bundlePromise = combineParts(BUNDLE_URL, 34, "application/octet-stream", 2)
+          .then(blob => {
+            const url = URL.createObjectURL(blob);
+            assetUrls.set(BUNDLE_KEY, url);
+            return url;
+          })
+          .catch(error => { bundlePromise = null; throw error; });
+      }
+      return bundlePromise;
     }
 
     window.fetch = function(resource, options) {
-      const cachedUrl = assetUrls.get(assetKey(resourceUrl(resource)));
-      return cachedUrl ? externalFetch(cachedUrl, resource, options) : fetchWithFallback(resource, options);
+      const key = assetKey(resourceUrl(resource));
+      const cachedUrl = assetUrls.get(key);
+      if (cachedUrl) return externalFetch(cachedUrl, resource, options);
+      // Large bundle not preloaded: download it now, then serve it.
+      if (key === BUNDLE_KEY) return ensureLargeBundle().then(url => externalFetch(url, resource, options));
+      return fetchWithFallback(resource, options);
     };
 
     window.XMLHttpRequest = function() {
       const xhr = new BrowserXMLHttpRequest();
-      const originalOpen = xhr.open;
-      const originalSetRequestHeader = xhr.setRequestHeader;
+      const originalOpen = xhr.open.bind(xhr);
+      const originalSend = xhr.send.bind(xhr);
+      const originalSetRequestHeader = xhr.setRequestHeader.bind(xhr);
+      // open() is deferred so send() can swap in the lazily-downloaded
+      // bundle URL. Header sets before send() are queued and replayed.
+      let openArgs = null;
+      const queuedHeaders = [];
       let externalGet = false;
-      xhr.open = function(method, url) {
-        const target = assetUrls.get(assetKey(String(url))) || rewriteToServer(String(url), false);
-        externalGet = /^(GET|HEAD)$/i.test(method) && (target.startsWith(JSDELIVR + "/") || target.startsWith("blob:"));
-        const args = Array.prototype.slice.call(arguments);
-        args[1] = target;
-        return originalOpen.apply(xhr, args);
+      xhr.open = function() {
+        openArgs = Array.prototype.slice.call(arguments);
       };
       xhr.setRequestHeader = function(name, value) {
-        if (externalGet && !/^(accept|accept-language|range)$/i.test(String(name))) return;
-        return originalSetRequestHeader.call(xhr, name, value);
+        if (!openArgs) return originalSetRequestHeader.call(xhr, name, value);
+        queuedHeaders.push([name, value]);
+      };
+      xhr.send = function(body) {
+        const args = openArgs;
+        openArgs = null;
+        const method = args[0];
+        const rawUrl = String(args[1]);
+        const serve = target => {
+          externalGet = /^(GET|HEAD)$/i.test(method) && (target.startsWith(JSDELIVR + "/") || target.startsWith("blob:"));
+          const finalArgs = args.slice();
+          finalArgs[1] = target;
+          originalOpen.apply(xhr, finalArgs);
+          for (const pair of queuedHeaders) {
+            if (externalGet && !/^(accept|accept-language|range)$/i.test(String(pair[0]))) continue;
+            originalSetRequestHeader.call(xhr, pair[0], pair[1]);
+          }
+          queuedHeaders.length = 0;
+          return originalSend.call(xhr, body);
+        };
+        const mapped = assetUrls.get(assetKey(rawUrl));
+        if (mapped) return serve(mapped);
+        if (assetKey(rawUrl) === BUNDLE_KEY) {
+          // Async-only: send() returns now, the XHR completes once the
+          // bundle finishes downloading. Unity uses async XHR for bundles.
+          ensureLargeBundle().then(serve, () => serve(rewriteToServer(rawUrl, false)));
+          return;
+        }
+        return serve(rewriteToServer(rawUrl, false));
       };
       return xhr;
     };
