@@ -15,6 +15,10 @@
     .download-track{height:12px;overflow:hidden;border:1px solid #777;border-radius:8px}
     .download-fill{width:0;height:100%;background:#35d0ba;transition:width .12s linear}
     #error{margin-top:12px;color:#ff6961;white-space:pre-wrap}
+    #ios-warn{position:fixed;inset:0;z-index:3;display:none;place-items:center;background:#000;color:#fff;font:16px Arial,sans-serif;padding:20px}
+    #ios-warn-box{width:min(520px,90vw);text-align:center}
+    #ios-warn button{margin-top:16px;padding:10px 22px;font-size:15px;border:0;border-radius:8px;background:#35d0ba;color:#000;cursor:pointer}
+    #ios-warn button.secondary{background:transparent;color:#35d0ba;border:1px solid #35d0ba;margin-left:8px}
   </style>
 </head>
 <body>
@@ -34,6 +38,12 @@
           <div class="download-track" role="progressbar" aria-label="Assets" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="assets-bar"><div class="download-fill" id="assets-fill"></div></div>
         </div>
     <div id="error"></div>
+  </div></div>
+  <div id="ios-warn"><div id="ios-warn-box">
+    <h2 style="margin:0 0 12px">iPad may not run this game</h2>
+    <p style="line-height:1.5">Among Us Web downloads ~860&nbsp;MB and needs over 1&nbsp;GB of memory. iPads kill tabs past their limit, which is why the page loads, runs a few seconds, then refreshes. Older iPads physically cannot run it — play on PC instead.</p>
+    <p style="line-height:1.5">Newer (M-series) iPads have higher limits and might manage it. You can try, but expect crashes.</p>
+    <div><button id="ios-force" type="button">Load anyway</button><button id="ios-back" class="secondary" type="button">Go back</button></div>
   </div></div>
   <script>
 
@@ -433,7 +443,22 @@
       loader.style.display = "none";
     }
 
-    start().catch(error => {
+    // iPads that can't hold this game just crash-loop (load ~860 MB, run a
+    // few seconds, jetsam refresh). Gate them with an honest warning instead.
+    // ?force=1 bypasses for M-series iPads with higher memory limits.
+    const forceLoad = new URLSearchParams(location.search).get("force") === "1";
+    if (IS_IOS && !forceLoad) {
+      loader.style.display = "none";
+      const warn = document.getElementById("ios-warn");
+      warn.style.display = "grid";
+      document.getElementById("ios-force").addEventListener("click", () => {
+        const params = new URLSearchParams(location.search);
+        params.set("force", "1");
+        location.search = params.toString();
+      });
+      document.getElementById("ios-back").addEventListener("click", () => history.back());
+    } else {
+      start().catch(error => {
       loadingFailed = true;
       preloadAbort.abort();
       if (progressFrame !== null) cancelAnimationFrame(progressFrame);
@@ -446,7 +471,8 @@
         ? rawMessage + "\n\nThis game needs ~1 GB of free memory. On iPad: close other tabs/apps, turn off Private Browsing, then reload and try again."
         : rawMessage;
       console.error(error);
-    });
+      });
+    }
   </script>
 </body>
 </html>
