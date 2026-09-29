@@ -28,7 +28,7 @@
     try {
       var img = new Image();
       img.src =
-        "/movie-ping?v=20260929.11&origin=" +
+        "/movie-ping?v=20260929.12&origin=" +
         encodeURIComponent(targetOrigin || "none") +
         "&err=" +
         encodeURIComponent(String(msg).slice(0, 300));
@@ -100,7 +100,7 @@
     } catch (e) {}
     var pingImg = new Image();
     pingImg.src =
-      "/movie-ping?v=20260929.11&origin=" +
+      "/movie-ping?v=20260929.12&origin=" +
       encodeURIComponent(targetOrigin || "none") +
       "&sample=" +
       encodeURIComponent(pingSample);
@@ -347,6 +347,39 @@
                         ":" +
                         ((playErr && playErr.message) || playErr),
                     );
+                  }
+                  // Safari aborts a pending play() when the player reassigns
+                  // src / calls load() mid-gesture (React re-render after
+                  // subtitles/quality state lands does exactly this). The
+                  // provider never retries, so the frame sits black with
+                  // playlists loaded but zero segments fetched. Retry once
+                  // after the reassignment settles: if the element is still
+                  // in the document and still paused, one more play() is
+                  // what the user already asked for by tapping play.
+                  if (
+                    playErr &&
+                    playErr.name === "AbortError" &&
+                    !el.__mpPlayRetried
+                  ) {
+                    el.__mpPlayRetried = true;
+                    setTimeout(function () {
+                      try {
+                        if (!el.isConnected || !el.paused) return;
+                        var p2 = origPlay.call(el);
+                        if (p2 && p2.catch) {
+                          p2.catch(function (retryErr) {
+                            try {
+                              beaconErr(
+                                "video:play-retry-failed:" +
+                                  ((retryErr && retryErr.name) || "?") +
+                                  ":" +
+                                  ((retryErr && retryErr.message) || retryErr),
+                              );
+                            } catch (e) {}
+                          });
+                        }
+                      } catch (e) {}
+                    }, 1000);
                   }
                 } catch (e) {}
               });
