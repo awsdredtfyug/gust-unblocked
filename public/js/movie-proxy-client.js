@@ -28,7 +28,7 @@
     try {
       var img = new Image();
       img.src =
-        "/movie-ping?v=20260929.12&origin=" +
+        "/movie-ping?v=20260929.13&origin=" +
         encodeURIComponent(targetOrigin || "none") +
         "&err=" +
         encodeURIComponent(String(msg).slice(0, 300));
@@ -100,7 +100,7 @@
     } catch (e) {}
     var pingImg = new Image();
     pingImg.src =
-      "/movie-ping?v=20260929.12&origin=" +
+      "/movie-ping?v=20260929.13&origin=" +
       encodeURIComponent(targetOrigin || "none") +
       "&sample=" +
       encodeURIComponent(pingSample);
@@ -150,6 +150,61 @@
       .replace(/&#39;/g, "'");
   }
 
+  // Undo double-proxying: provider code sometimes takes an already-rewritten
+  // relay URL (e.g. a subtitle file URL from a rewritten JSON list) and
+  // embeds it as a parameter of its own API call
+  // (/api/subtitle?url=/movie-proxy?url=...). Forwarding that nesting
+  // upstream makes the provider fetch our relay URL instead of the media
+  // file, which it rejects (observed: 500 on flixer's subtitle endpoint).
+  // Replace nested relay URLs with their direct upstream targets before
+  // proxying the outer URL. Other parameters are spliced byte-for-byte so
+  // signed query strings are never normalized.
+  function unnestRelayUrls(raw) {
+    var RELAY_MARK = PROXY_ROUTE + "?url=";
+    if (
+      raw.indexOf(RELAY_MARK) === -1 &&
+      raw.indexOf(encodeURIComponent(RELAY_MARK)) === -1
+    )
+      return raw;
+    try {
+      var u = new URL(raw, resolveBase());
+      var query = u.search ? u.search.slice(1) : "";
+      if (!query) return raw;
+      var out = [];
+      var changed = false;
+      query.split("&").forEach(function (pair) {
+        var eq = pair.indexOf("=");
+        var key = eq === -1 ? pair : pair.slice(0, eq);
+        var val = eq === -1 ? "" : pair.slice(eq + 1);
+        var decoded = null;
+        try {
+          decoded = decodeURIComponent(val.replace(/\+/g, " "));
+        } catch (e) {}
+        if (decoded && decoded.indexOf(RELAY_MARK) !== -1) {
+          try {
+            var inner = new URL(decoded, resolveBase()).searchParams.get(
+              "url",
+            );
+            if (inner) {
+              val = encodeURIComponent(inner);
+              changed = true;
+            }
+          } catch (e) {}
+        }
+        out.push(eq === -1 ? key : key + "=" + val);
+      });
+      if (!changed) return raw;
+      var rebuilt =
+        u.origin +
+        u.pathname +
+        (out.length ? "?" + out.join("&") : "") +
+        u.hash;
+      // Triple-nested wrappers collapse one level per pass.
+      return unnestRelayUrls(rebuilt);
+    } catch (e) {}
+    return raw;
+  }
+
   function toProxyUrl(rawUrl, ref) {
     if (!rawUrl || typeof rawUrl !== "string") return rawUrl;
     var trimmed = decodeEntities(rawUrl.trim());
@@ -160,6 +215,11 @@
     // module loader will import (module identity depends on it).
     if (/^\/\/movie-proxy(?=\/|\?|$)/.test(trimmed))
       trimmed = trimmed.slice(1);
+    // Provider code may embed an already-proxied URL as a parameter of its
+    // own API call (/api/subtitle?url=/movie-proxy?url=...) — unwrap those
+    // before anything else, otherwise the already-proxied check below
+    // returns the nesting untouched and upstream chokes on it.
+    trimmed = unnestRelayUrls(trimmed);
     // Some embed scripts blindly prepend their CDN base to an iframe URL.
     // Recover our absolute relay URL from values such as
     // https://cdn.example/e/https://aetheris.win/movie-proxy?url=...
@@ -326,9 +386,44 @@
       }
       return mediaSetAttr.call(this, attrName, val);
     };
-    // iPad diagnosis: report play() rejections (Safari autoplay policy) and
-    // media element errors (codec/HLS failures show as black video with no
-    // JS exception). One beacon each per element to avoid log spam.
+    // iPad diagnosis + recovery: report play() rejections (Safari autoplay
+    // policy) and media element errors (codec/HLS failures show as black
+    // video with no JS exception). One beacon each per element to avoid
+    // log spam.
+    //
+    // Safari aborts a pending play() whenever the player reassigns src /
+    // calls load() mid-gesture (React re-render after subtitles/quality
+    // state lands, or a fresh signed URL after an upstream 503 retry does
+    // exactly this). The provider never retries, so the frame sits black
+    // with playlists loaded but zero segments fetched. Retry with backoff:
+    // if the player settles, one of these wins. Guarded by isConnected +
+    // paused so a detached element or an already-playing video never loops.
+    function retryPlay(el, attempt) {
+      var delays = [1000, 2500, 5000, 10000];
+      if (attempt >= delays.length) return;
+      setTimeout(function () {
+        try {
+          if (!el.isConnected || !el.paused) return;
+          var pN = origPlay.call(el);
+          if (pN && pN.catch) {
+            pN.catch(function (retryErr) {
+              try {
+                beaconErr(
+                  "video:play-retry-" +
+                    (attempt + 1) +
+                    "-failed:" +
+                    ((retryErr && retryErr.name) || "?") +
+                    ":" +
+                    ((retryErr && retryErr.message) || retryErr),
+                );
+              } catch (e) {}
+              if (retryErr && retryErr.name === "AbortError")
+                retryPlay(el, attempt + 1);
+            });
+          }
+        } catch (e) {}
+      }, delays[attempt]);
+    }
     try {
       var origPlay = mediaProto.play;
       if (origPlay) {
@@ -348,39 +443,10 @@
                         ((playErr && playErr.message) || playErr),
                     );
                   }
-                  // Safari aborts a pending play() when the player reassigns
-                  // src / calls load() mid-gesture (React re-render after
-                  // subtitles/quality state lands does exactly this). The
-                  // provider never retries, so the frame sits black with
-                  // playlists loaded but zero segments fetched. Retry once
-                  // after the reassignment settles: if the element is still
-                  // in the document and still paused, one more play() is
-                  // what the user already asked for by tapping play.
-                  if (
-                    playErr &&
-                    playErr.name === "AbortError" &&
-                    !el.__mpPlayRetried
-                  ) {
-                    el.__mpPlayRetried = true;
-                    setTimeout(function () {
-                      try {
-                        if (!el.isConnected || !el.paused) return;
-                        var p2 = origPlay.call(el);
-                        if (p2 && p2.catch) {
-                          p2.catch(function (retryErr) {
-                            try {
-                              beaconErr(
-                                "video:play-retry-failed:" +
-                                  ((retryErr && retryErr.name) || "?") +
-                                  ":" +
-                                  ((retryErr && retryErr.message) || retryErr),
-                              );
-                            } catch (e) {}
-                          });
-                        }
-                      } catch (e) {}
-                    }, 1000);
-                  }
+                  // Transient aborts (src reassignment settling) recover on
+                  // their own; the provider won't retry, so we do, bounded.
+                  if (playErr && playErr.name === "AbortError")
+                    retryPlay(el, 0);
                 } catch (e) {}
               });
             }

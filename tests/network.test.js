@@ -181,6 +181,14 @@ test("movie proxy client repairs provider-prefixed absolute relay URLs", () => {
     client.includes('localCandidate.pathname === "/movie-ping"'),
     "relay-owned diagnostics must remain local",
   );
+  assert.ok(
+    client.includes("unnestRelayUrls"),
+    "nested relay URLs in provider API params must be unwrapped (subtitle 500)",
+  );
+  assert.ok(
+    client.includes("retryPlay"),
+    "aborted Safari play() calls must be retried with backoff",
+  );
 });
 
 test("all movie providers are configured as proxy-only", () => {
