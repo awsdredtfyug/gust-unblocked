@@ -81,6 +81,19 @@
     const loader = document.getElementById("loader");
     const statusText = document.getElementById("status");
     const errorText = document.getElementById("error");
+    // iPad/iPhone Safari tabs get jetsammed around ~1-1.5 GB while desktop
+    // Chrome happily holds several GB. This game preloads ~860 MB into Blobs
+    // before Unity even boots, so without iOS-specific guards the tab dies
+    // with "A problem repeatedly occurred" while PCs sail through.
+    const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    // IndexedDB caching ~860 MB of Blobs blows the iOS quota and doubles
+    // peak memory (network Blob + stored copy). Skip the cache on iOS and
+    // for very large blobs everywhere.
+    const SKIP_CACHE = IS_IOS;
+    const MAX_CACHE_BLOB = 64 * 1024 * 1024;
+    // jsDelivr + iOS networking chokes on 40+ parallel part fetches.
+    const MAX_CONCURRENT_PARTS = IS_IOS ? 3 : 6;
     const browserFetch = window.fetch.bind(window);
     const BrowserXMLHttpRequest = window.XMLHttpRequest;
     const preloadAbort = new AbortController();
@@ -155,6 +168,7 @@
     }
 
     async function cacheGet(url) {
+      if (SKIP_CACHE) return undefined;
       const db = await openCacheDb();
       if (!db) return undefined;
       return new Promise(resolve => {
@@ -168,6 +182,7 @@
     }
 
     async function cacheSet(url, blob) {
+      if (SKIP_CACHE || !(blob instanceof Blob) || blob.size > MAX_CACHE_BLOB) return;
       const db = await openCacheDb();
       if (!db) return;
       return new Promise(resolve => {
@@ -287,9 +302,22 @@
     }
 
     async function combineParts(baseUrl, count, mimeType, numberWidth = 0) {
-      const blobs = await Promise.all(Array.from({length:count}, (_, index) =>
-        downloadBlob(baseUrl + ".part" + String(index + 1).padStart(numberWidth, "0"), mimeType)
-      ));
+      // Promise.all over 34 bundle parts + data + wasm parts = ~50 parallel
+      // streamed fetches held in RAM at once. Desktop survives; iPad Safari
+      // exhausts connections and jetsams the tab. Download in small batches.
+      const blobs = new Array(count);
+      let next = 0;
+      async function worker() {
+        while (next < count) {
+          const index = next++;
+          blobs[index] = await downloadBlob(
+            baseUrl + ".part" + String(index + 1).padStart(numberWidth, "0"), mimeType);
+        }
+      }
+      const workers = [];
+      const concurrency = Math.min(MAX_CONCURRENT_PARTS, count);
+      for (let i = 0; i < concurrency; i++) workers.push(worker());
+      await Promise.all(workers);
       return new Blob(blobs, {type:mimeType});
     }
 
@@ -385,11 +413,23 @@
         companyName:"Innersloth",
         productName:"Among Us",
         productVersion:"2026.6.5",
+        // Without this an iPad renders at full retina resolution
+        // (e.g. 2732x2048 @2x) and the GPU allocation alone kills the tab.
+        // Other Unity games in this repo already cap DPR to 1 on mobile.
+        devicePixelRatio: IS_IOS ? 1 : (window.devicePixelRatio || 1),
         showBanner:(message,type) => type === "error" ? errorText.textContent = message : console.warn(message)
       };
       await createUnityInstance(canvas, config, value => {
         statusText.textContent = "Starting game… " + Math.floor(Math.max(0, Math.min(1, value)) * 100) + "%";
       });
+      // The data/wasm/framework Blobs (~270 MB combined) are copied into the
+      // Unity heap during instantiation. Revoking the object URLs lets Safari
+      // release that duplicate memory; without it the tab holds both copies.
+      try {
+        URL.revokeObjectURL(config.dataUrl);
+        URL.revokeObjectURL(config.frameworkUrl);
+        URL.revokeObjectURL(config.codeUrl);
+      } catch (error) {}
       loader.style.display = "none";
     }
 
@@ -398,7 +438,13 @@
       preloadAbort.abort();
       if (progressFrame !== null) cancelAnimationFrame(progressFrame);
       statusText.textContent = "Unable to start the game.";
-      errorText.textContent = error && error.message ? error.message : String(error);
+      const rawMessage = error && error.message ? error.message : String(error);
+      // Safari on iPad reports OOM as a generic abort/out-of-memory during
+      // WASM compile. Translate it into something actionable.
+      const isMemoryError = IS_IOS && /memory|abort|allocation|wasm|compile/i.test(rawMessage);
+      errorText.textContent = isMemoryError
+        ? rawMessage + "\n\nThis game needs ~1 GB of free memory. On iPad: close other tabs/apps, turn off Private Browsing, then reload and try again."
+        : rawMessage;
       console.error(error);
     });
   </script>
