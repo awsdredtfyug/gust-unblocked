@@ -356,3 +356,153 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 });
+
+window.downloadsite = async function (button) {
+  var status = document.getElementById("site-download-status");
+  if (button) button.disabled = true;
+  if (status) status.textContent = "Preparing offline snapshot...";
+
+  async function fetchdataurl(url) {
+    var response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok) throw new Error("Could not download a site asset.");
+    var blob = await response.blob();
+    return await new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(reader.result);
+      };
+      reader.onerror = function () {
+        reject(reader.error);
+      };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function embedcssassets(css, stylesheetUrl) {
+    var urls = Array.from(
+      css.matchAll(/url\(\s*(?:(["'])(.*?)\1|([^)]*?))\s*\)/gi),
+    );
+    for (var match of urls) {
+      var source = (match[2] || match[3] || "").trim();
+      if (!source || /^(data:|#)/i.test(source)) continue;
+      try {
+        var assetUrl = new URL(source, stylesheetUrl);
+        if (assetUrl.origin !== location.origin) continue;
+        var dataUrl = await fetchdataurl(assetUrl.href);
+        css = css.replace(match[0], "url('" + dataUrl + "')");
+      } catch (_) {}
+    }
+    return css;
+  }
+
+  try {
+    var homeUrl = new URL("/home.html", location.origin);
+    var response = await fetch(homeUrl.href, { credentials: "same-origin" });
+    if (!response.ok) throw new Error("Could not load the home page.");
+
+    var page = new DOMParser().parseFromString(
+      await response.text(),
+      "text/html",
+    );
+    page
+      .querySelectorAll("script, iframe, object, embed, form, #updatemodal, #report-overlay, .online-status")
+      .forEach(function (element) {
+        element.remove();
+      });
+
+    var stylesheets = Array.from(
+      page.querySelectorAll('link[rel="stylesheet"]'),
+    );
+    for (var stylesheet of stylesheets) {
+      var stylesheetUrl = new URL(stylesheet.getAttribute("href"), homeUrl);
+      stylesheet.remove();
+      if (stylesheetUrl.origin !== location.origin) continue;
+      var cssResponse = await fetch(stylesheetUrl.href, {
+        credentials: "same-origin",
+      });
+      if (!cssResponse.ok)
+        throw new Error("Could not download the home page styles.");
+      var style = page.createElement("style");
+      style.textContent = await embedcssassets(
+        await cssResponse.text(),
+        stylesheetUrl.href,
+      );
+      page.head.appendChild(style);
+    }
+
+    for (var image of page.querySelectorAll("img[src]")) {
+      try {
+        var imageUrl = new URL(image.getAttribute("src"), homeUrl);
+        if (imageUrl.origin === location.origin)
+          image.src = await fetchdataurl(imageUrl.href);
+      } catch (_) {
+        image.remove();
+      }
+    }
+
+    for (var icon of page.querySelectorAll('link[rel~="icon"][href]')) {
+      try {
+        var iconUrl = new URL(icon.getAttribute("href"), homeUrl);
+        if (iconUrl.origin === location.origin)
+          icon.href = await fetchdataurl(iconUrl.href);
+      } catch (_) {
+        icon.remove();
+      }
+    }
+
+    page.querySelectorAll("[onclick]").forEach(function (element) {
+      element.removeAttribute("onclick");
+    });
+    page.querySelectorAll('a[href="#"]').forEach(function (link) {
+      link.remove();
+    });
+    page.querySelectorAll("input").forEach(function (input) {
+      input.disabled = true;
+      input.placeholder = "Search is available on aetheris.win";
+    });
+    page.querySelectorAll("a[href]").forEach(function (link) {
+      var href = link.getAttribute("href");
+      if (!href || href.startsWith("#")) return;
+      try {
+        var linkUrl = new URL(href, homeUrl);
+        if (linkUrl.origin === location.origin) {
+          link.href = new URL(
+            linkUrl.pathname + linkUrl.search + linkUrl.hash,
+            "https://aetheris.win",
+          ).href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+        }
+      } catch (_) {}
+    });
+
+    page.title = "Aetheris Offline Snapshot";
+    var notice = page.createElement("aside");
+    notice.setAttribute("role", "note");
+    notice.style.cssText =
+      "position:fixed;z-index:10000;top:12px;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);padding:9px 12px;border:1px solid #777;border-radius:6px;background:#111;color:#eee;font:13px/1.4 sans-serif;text-align:center;";
+    notice.innerHTML =
+      'Offline home-page snapshot. Server features need the <a href="https://aetheris.win/" target="_blank" rel="noopener noreferrer" style="color:#9ee7b0">live site</a>.';
+    page.body.prepend(notice);
+
+    var file = new Blob(["<!doctype html>\n" + page.documentElement.outerHTML], {
+      type: "text/html;charset=utf-8",
+    });
+    var fileUrl = URL.createObjectURL(file);
+    var link = document.createElement("a");
+    link.href = fileUrl;
+    link.download = "aetheris-offline.html";
+    link.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(fileUrl);
+    }, 1000);
+    if (status)
+      status.textContent = "Downloaded aetheris-offline.html.";
+  } catch (error) {
+    if (status)
+      status.textContent =
+        error.message || "Could not create the offline snapshot.";
+  } finally {
+    if (button) button.disabled = false;
+  }
+};

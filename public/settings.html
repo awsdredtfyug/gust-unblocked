@@ -388,9 +388,25 @@
             onchange="importdata(event)"
           />
         </div>
+        <h2>Offline snapshot</h2>
+        <h4>
+          Download a single-file snapshot of the home page. Search, games,
+          accounts, and other server features still need the live site.
+        </h4>
+        <div class="form-row">
+          <button onclick="downloadsite(this)" class="secondary">
+            ⬇ Download HTML snapshot
+          </button>
+        </div>
         <div
           id="data-status"
           role="status"
+          style="margin-top: 10px; font-size: 0.92em; opacity: 0.75"
+        ></div>
+        <div
+          id="site-download-status"
+          role="status"
+          aria-live="polite"
           style="margin-top: 10px; font-size: 0.92em; opacity: 0.75"
         ></div>
 
