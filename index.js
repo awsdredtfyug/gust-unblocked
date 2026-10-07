@@ -20,6 +20,7 @@ import { pipeline } from "node:stream/promises";
 
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
+import { ZipArchive } from "archiver";
 import { WebSocket, WebSocketServer } from "ws";
 import { server as wisp, logging } from "@mercuryworkshop/wisp-js/server";
 import { scramjetPath } from "@mercuryworkshop/scramjet/path";
@@ -66,6 +67,7 @@ const scramjetControllerPath = dirname(
 const scryptAsync = promisify(scrypt);
 
 const publicpath = fileURLToPath(new URL("./public/", import.meta.url));
+const appRoot = dirname(publicpath);
 
 // --- password hashing ---
 
@@ -691,6 +693,8 @@ fastify.addHook("onRequest", async (req, reply) => {
   // too, not just the POST APIs
   const isModels = req.method === "GET" && path === "/api/ai/models";
   const isTmdb = req.method === "GET" && path.startsWith("/api/tmdb/");
+  const isSiteDownload =
+    req.method === "GET" && path === "/api/site-download";
   const isImg = req.method === "GET" && path === "/img";
   const isPing = req.method === "GET" && path === "/movie-ping";
   const isRelay =
@@ -711,11 +715,13 @@ fastify.addHook("onRequest", async (req, reply) => {
     req.method === "GET" &&
     path.startsWith("/api/") &&
     !isModels &&
-    !isTmdb;
+    !isTmdb &&
+    !isSiteDownload;
   if (
     req.method !== "POST" &&
     !isModels &&
     !isTmdb &&
+    !isSiteDownload &&
     !isRelay &&
     !isImg &&
     !isPing &&
@@ -725,7 +731,10 @@ fastify.addHook("onRequest", async (req, reply) => {
   let limit = 0,
     windowMs = 60000,
     group = path;
-  if (isRelay) {
+  if (isSiteDownload) {
+    limit = 1;
+    group = "site-download";
+  } else if (isRelay) {
     // the relay is an open CORS-wide proxy; a classroom behind one NAT IP
     // legitimately streams a few hundred HLS requests a minute, so the cap
     // sits well above that but still stops bulk laundering/scraping
@@ -839,6 +848,74 @@ fastify.get("/online", (req, reply) => {
 fastify.get("/online-count", (_req, reply) => {
   reply.header("Access-Control-Allow-Origin", "*");
   reply.send({ count: onlinecount() });
+});
+
+let siteArchiveActive = false;
+fastify.get("/api/site-download", (req, reply) => {
+  if (siteArchiveActive)
+    return reply
+      .code(503)
+      .header("Retry-After", "60")
+      .send({ ok: false, error: "A site download is already being prepared." });
+
+  const archive = new ZipArchive({ zlib: { level: 1 } });
+  siteArchiveActive = true;
+  let released = false;
+  const releaseArchiveSlot = () => {
+    if (released) return;
+    released = true;
+    siteArchiveActive = false;
+  };
+  archive.on("warning", (error) => {
+    req.log.warn({ err: error }, "offline site archive warning");
+  });
+  archive.on("error", (error) => {
+    releaseArchiveSlot();
+    req.log.error({ err: error }, "offline site archive failed");
+    if (!reply.raw.destroyed) reply.raw.destroy(error);
+  });
+  archive.once("end", releaseArchiveSlot);
+  reply.raw.once("close", () => {
+    if (!reply.raw.writableFinished) {
+      archive.abort();
+      releaseArchiveSlot();
+    }
+  });
+
+  archive.directory(publicpath, "aetheris/public");
+  archive.directory(join(appRoot, "lib"), "aetheris/lib");
+  for (const file of [
+    "index.js",
+    "lc-relay.js",
+    "movie-relay.js",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "LICENSE",
+  ]) {
+    archive.file(join(appRoot, file), { name: `aetheris/${file}` });
+  }
+  archive.append(
+    "Aetheris local site bundle\n\n" +
+      "Requirements: Node.js 20.19+ and pnpm 10.\n" +
+      "1. Open a terminal in this aetheris folder.\n" +
+      "2. Run: pnpm install --frozen-lockfile\n" +
+      "3. Run: pnpm start\n" +
+      "4. Open http://localhost:8080\n\n" +
+      "The site files and locally stored game assets are included. Installing " +
+      "dependencies and features that use proxies, APIs, accounts, or external " +
+      "game services require an internet connection. No .env file, accounts, " +
+      "or production secrets are included.\n",
+    { name: "aetheris/README-OFFLINE.txt" },
+  );
+
+  reply
+    .header("Content-Type", "application/zip")
+    .header("Content-Disposition", 'attachment; filename="aetheris-offline.zip"')
+    .header("Cache-Control", "no-store");
+  const response = reply.send(archive);
+  archive.finalize().catch((error) => archive.emit("error", error));
+  return response;
 });
 
 // cached responses for the top/counts endpoints — recalculated every 10s at most

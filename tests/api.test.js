@@ -148,6 +148,28 @@ after(async () => {
   if (runtime) rmSync(runtime, { recursive: true, force: true });
 });
 
+test("full-site download streams a rate-limited ZIP archive", async () => {
+  const response = await fetch(base + "/api/site-download");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /application\/zip/);
+  assert.match(
+    response.headers.get("content-disposition"),
+    /aetheris-offline\.zip/,
+  );
+
+  const reader = response.body.getReader();
+  const firstChunk = await reader.read();
+  assert.equal(firstChunk.done, false);
+  assert.deepEqual(
+    Array.from(firstChunk.value.subarray(0, 4)),
+    [0x50, 0x4b, 0x03, 0x04],
+  );
+  await reader.cancel();
+
+  const limited = await fetch(base + "/api/site-download");
+  assert.equal(limited.status, 429);
+});
+
 test("malformed and reserved account input returns 400, not 500", async () => {
   for (const username of [
     42,

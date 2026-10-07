@@ -388,28 +388,22 @@
             onchange="importdata(event)"
           />
         </div>
-        <h2>Offline snapshot</h2>
+        <h2>Full site download</h2>
         <h4>
-          Download a single-file snapshot of the home page. Search, games,
-          accounts, and other server features still need the live site.
+          Download the full site and local game files as a ZIP. Run it with
+          Node.js to preserve page paths. Installing dependencies and features
+          that use proxies, APIs, or external game services need internet.
         </h4>
         <div class="form-row">
-          <button onclick="downloadsite(this)" class="secondary">
-            ⬇ Download HTML snapshot
-          </button>
+          <a href="/api/site-download" class="button secondary" download>
+            ⬇ Download full site ZIP
+          </a>
         </div>
         <div
           id="data-status"
           role="status"
           style="margin-top: 10px; font-size: 0.92em; opacity: 0.75"
         ></div>
-        <div
-          id="site-download-status"
-          role="status"
-          aria-live="polite"
-          style="margin-top: 10px; font-size: 0.92em; opacity: 0.75"
-        ></div>
-
         <h2>Cache</h2>
         <h4>
           Clear proxy/catalog caches and the site service worker. Game-save

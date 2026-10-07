@@ -21,6 +21,7 @@
     "@mercuryworkshop/scramjet": "2.0.67-alpha.2",
     "@mercuryworkshop/scramjet-controller": "0.0.14",
     "@mercuryworkshop/wisp-js": "^0.4.1",
+    "archiver": "^8.0.0",
     "fastify": "^5.12.3",
     "ws": "^8.21.1"
   },
