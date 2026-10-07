@@ -356,35 +356,3 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 });
-
-window.downloadsite = function () {
-  var destination = "https://aetheris.win/";
-  var launcher = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="0;url=${destination}">
-  <title>Aetheris</title>
-</head>
-<body>
-  <p>Opening Aetheris...</p>
-  <p><a href="${destination}">Open Aetheris</a></p>
-  <script>window.location.replace("${destination}");</script>
-</body>
-</html>`;
-  var file = new Blob([launcher], { type: "text/html;charset=utf-8" });
-  var fileUrl = URL.createObjectURL(file);
-  var link = document.createElement("a");
-  link.href = fileUrl;
-  link.download = "aetheris.html";
-  link.click();
-  setTimeout(function () {
-    URL.revokeObjectURL(fileUrl);
-  }, 1000);
-
-  var status = document.getElementById("site-download-status");
-  if (status)
-    status.textContent =
-      "Downloaded aetheris.html. Open it with internet access to use the full site.";
-};
