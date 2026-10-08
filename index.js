@@ -2353,6 +2353,12 @@ fastify.get("/controller/controller.api.js", (_req, reply) => {
 // what this patch did to the relay. Serve the file untouched.
 
 fastify.register(fastifyStatic, { root: publicpath, decorateReply: true });
+fastify.get("/aetheris.html", (_req, reply) =>
+  reply
+    .header("Content-Disposition", 'attachment; filename="aetheris.html"')
+    .type("text/html; charset=utf-8")
+    .sendFile("aetheris.html"),
+);
 // scramjet v2's controller package hardcodes these two path prefixes as its
 // defaults (Config.scramjetPath / Config.injectPath / Config.wasmPath in
 // @mercuryworkshop/scramjet-controller) — keep them as-is rather than
